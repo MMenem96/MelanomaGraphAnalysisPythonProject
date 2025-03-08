@@ -1,0 +1,5 @@
+Melanoma Risk Assessment
+------------------------
+Image: test/benign/ISIC_0024306.jpg
+Probability: 1.95%
+Risk Level: LOW

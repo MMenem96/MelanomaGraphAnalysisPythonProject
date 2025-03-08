@@ -1,0 +1,3 @@
+Predict: python main.py --mode predict --image test/benign/ISIC_0024306.jpg --n-segments 20 --compactness 10 --connectivity-threshold 0.5
+
+Train: python main.py --mode train --melanoma-dir data/melanoma --benign-dir data/benign --n-segments 20 --compactness 10 --connectivity-threshold 0.5 --classifier svm
