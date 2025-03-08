@@ -17,7 +17,10 @@ def predict():
     try:
         # Get the uploaded image
         if 'image' not in request.files:
-            return jsonify({"error": "No image provided"}), 400
+            return jsonify({"status": 400,
+                            "message": "No image provided"
+                            }
+                           ), 400
 
         image_file = request.files['image']
         image_path = "uploads/temp.jpg"
@@ -64,13 +67,16 @@ def predict():
         risk_level = "HIGH" if probability > 0.5 else "LOW"
 
         return jsonify({
-            "probability": probability,
-            "risk_level": risk_level
-        })
+            "status": "success",
+            "message": "Image processed successfully",
+            "data": {
+                "probability": probability,
+                "risk_level": risk_level
+            }},200
+    )
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
+        return jsonify({"status": 500,"message": str(e)}), 500
 
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=8080)
