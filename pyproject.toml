@@ -2,7 +2,7 @@
 name = "MelanomaGraphAnalysisV3"
 version = "0.1.0"
 description = "MelanomaBenignClassifier"
-authors = ["Mohamed Abdelmoniem ma3546@fayoum.edu.eg"]
+authors = ["Mohamed Abdelmoniem <ma3546@fayoum.edu.eg>"]
 
 [tool.poetry.dependencies]
 python = ">=3.11"
