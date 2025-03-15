@@ -1,10 +1,10 @@
 from flask import Flask, request, jsonify
 import os
-from preprocessing import ImagePreprocessor
-from superpixel import SuperpixelGenerator
-from graph_construction import GraphConstructor
-from feature_extraction import FeatureExtractor
-from classifier import MelanomaClassifier
+from src.preprocessing import ImagePreprocessor
+from src.superpixel import SuperpixelGenerator
+from src.graph_construction import GraphConstructor
+from src.feature_extraction import FeatureExtractor
+from src.classifier import MelanomaClassifier
 from joblib import load
 
 app = Flask(__name__)
@@ -67,13 +67,12 @@ def predict():
         risk_level = "HIGH" if probability > 0.5 else "LOW"
 
         return jsonify({
-            "status": "success",
+            "status": 200,
             "message": "Image processed successfully",
             "data": {
                 "probability": probability,
                 "risk_level": risk_level
-            }},200
-    )
+            }}) ,200
 
     except Exception as e:
         return jsonify({"status": 500,"message": str(e)}), 500

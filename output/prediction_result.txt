@@ -1,5 +1,5 @@
 Melanoma Risk Assessment
 ------------------------
-Image: test/melanoma/ISIC_0036035.jpg
+Image: test/benign/ISIC_0036012.jpg
 Probability: 39.73%
 Risk Level: LOW
