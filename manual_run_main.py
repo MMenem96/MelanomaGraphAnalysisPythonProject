@@ -1,28 +1,49 @@
+import os
 import argparse
 import logging
-import os
-from src.preprocessing import ImagePreprocessor
-from src.superpixel import SuperpixelGenerator
-from src.graph_construction import GraphConstructor
-from src.feature_extraction import FeatureExtractor
-from src.visualization import Visualizer
-from src.classifier import MelanomaClassifier
 from src.dataset_handler import DatasetHandler
-from src.utils import setup_logging, validate_image_path, validate_parameters
+from src.classifier import MelanomaClassifier
+
+def setup_logging():
+    """Set up logging configuration."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler("melanoma_detection.log"),
+            logging.StreamHandler()
+        ]
+    )
+    return logging.getLogger("MelanomaDetection")
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='Melanoma Detection using Superpixel Graphs')
-    parser.add_argument('--mode', choices=['train', 'predict'], required=True,
-                      help='Mode of operation: train or predict')
-    parser.add_argument('--melanoma-dir', help='Directory containing melanoma images (for training)')
-    parser.add_argument('--benign-dir', help='Directory containing benign images (for training)')
-    parser.add_argument('--image', help='Path to the input image (for prediction)')
-    parser.add_argument('--n-segments', type=int, default=20, help='Number of superpixels')
-    parser.add_argument('--compactness', type=float, default=10, help='Compactness parameter for SLIC')
-    parser.add_argument('--connectivity-threshold', type=float, default=0.5, 
-                      help='Threshold for graph connectivity')
-    parser.add_argument('--classifier', choices=['svm', 'rf'], default='svm',
-                      help='Classifier type: Support Vector Machine (svm) or Random Forest (rf)')
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(description='Melanoma Detection System')
+    
+    # Dataset paths
+    parser.add_argument('--melanoma-dir', type=str, default='data/melanoma',
+                        help='Directory containing melanoma images')
+    parser.add_argument('--benign-dir', type=str, default='data/benign',
+                        help='Directory containing benign lesion images')
+    
+    # Model parameters
+    parser.add_argument('--classifier', type=str, choices=['svm', 'rf'], default='svm',
+                        help='Type of classifier to use')
+    
+    # Superpixel parameters
+    parser.add_argument('--n-segments', type=int, default=20,
+                        help='Number of superpixel segments')
+    parser.add_argument('--compactness', type=float, default=10.0,
+                        help='Compactness parameter for SLIC')
+    
+    # Graph construction parameters
+    parser.add_argument('--connectivity-threshold', type=float, default=0.5,
+                        help='Threshold for connecting superpixels in graph')
+    
+    # Operation mode
+    parser.add_argument('--mode', type=str, choices=['train', 'evaluate'], default='train',
+                        help='Operation mode: train or evaluate')
+    
     return parser.parse_args()
 
 def train(args, logger):
@@ -57,6 +78,7 @@ def train(args, logger):
         # Prepare features
         logger.info("Preparing features...")
         X_train = classifier.prepare_features(train_graphs)
+        X_test = classifier.prepare_features(test_graphs)
 
         # Train and evaluate
         logger.info("Training and evaluating model...")
@@ -67,131 +89,85 @@ def train(args, logger):
         logger.info(f"Accuracy: {results['accuracy']:.3f} ± {results['std_accuracy']:.3f}")
         logger.info(f"Precision: {results['precision']:.3f} ± {results['std_precision']:.3f}")
         logger.info(f"Recall: {results['recall']:.3f} ± {results['std_recall']:.3f}")
+        
+        # Perform additional evaluation on test set
+        logger.info("Performing evaluation on test set...")
+        test_evaluation = classifier.evaluate_model(X_test, test_labels)
+        
+        logger.info("Test Set Evaluation Complete")
+        logger.info("Check output directory for detailed results and visualizations")
 
     except Exception as e:
         logger.error(f"Error during training: {str(e)}")
         raise
 
-def predict(args, logger):
-    """Predict melanoma probability for a single image."""
+def evaluate(args, logger):
+    """Evaluate a trained model."""
     try:
-        # Initialize components
-        preprocessor = ImagePreprocessor()
-        superpixel_gen = SuperpixelGenerator(
+        # Initialize dataset handler
+        dataset_handler = DatasetHandler(
             n_segments=args.n_segments,
-            compactness=args.compactness
-        )
-        graph_constructor = GraphConstructor(
+            compactness=args.compactness,
             connectivity_threshold=args.connectivity_threshold
         )
-        feature_extractor = FeatureExtractor()
-        visualizer = Visualizer()
-        classifier = MelanomaClassifier(classifier_type=args.classifier)
 
-        # Process image
-        logger.info("Loading and preprocessing image...")
-        image = preprocessor.load_image(args.image)
-        processed_image = preprocessor.preprocess(image)
-
-        # Generate superpixels
-        logger.info("Generating superpixels...")
-        segments = superpixel_gen.generate_superpixels(processed_image)
-        features = superpixel_gen.compute_superpixel_features(processed_image, segments)
-
-        # Construct graph
-        logger.info("Constructing graph...")
-        G = graph_constructor.build_graph(features, segments)
-
-        # Extract features
-        logger.info("Extracting features...")
-        G.graph['features'] = {
-            **feature_extractor.extract_local_features(G),
-            **feature_extractor.extract_global_features(G),
-            **feature_extractor.extract_spectral_features(G)
-        }
-
-        # Generate visualizations
-        logger.info("Generating visualizations...")
-        visualizer.plot_superpixels(image, segments)
-        visualizer.plot_graph(G)
-        visualizer.plot_features(
-            G.graph['features'],
-            {k: v for k, v in G.graph['features'].items() 
-             if not isinstance(v, dict)}
+        # Process test dataset
+        logger.info("Processing test dataset...")
+        graphs, labels = dataset_handler.process_dataset(
+            args.melanoma_dir,
+            args.benign_dir
         )
 
-        # Make prediction if model exists
+        # Initialize classifier
+        classifier = MelanomaClassifier(classifier_type=args.classifier)
+
+        # Prepare features
+        logger.info("Preparing features...")
+        X = classifier.prepare_features(graphs)
+
+        # Load model
+        logger.info("Loading model...")
         model_path = 'model/melanoma_classifier.joblib'
         scaler_path = 'model/scaler.joblib'
-
-        if os.path.exists(model_path) and os.path.exists(scaler_path):
-            logger.info("Making prediction...")
-            # Prepare features for prediction
-            X = classifier.prepare_features([G])
-
-            # Load model and scaler
-            from joblib import load
-            model = load(model_path)
-            scaler = load(scaler_path)
-
-            # Scale features and predict
-            X_scaled = scaler.transform(X)
-            probability = model.predict_proba(X_scaled)[0][1]
-
-            logger.info(f"Probability of melanoma: {probability:.2%}")
-            risk_level = 'HIGH' if probability > 0.5 else 'LOW'
-            logger.info(f"{risk_level} risk of melanoma")
-
-            # Save prediction result
-            with open(os.path.join('output', 'prediction_result.txt'), 'w') as f:
-                f.write(f"Melanoma Risk Assessment\n")
-                f.write(f"------------------------\n")
-                f.write(f"Image: {args.image}\n")
-                f.write(f"Probability: {probability:.2%}\n")
-                f.write(f"Risk Level: {risk_level}\n")
-        else:
-            logger.warning("No trained model found. Please train the model first using --mode train")
-
-        logger.info("Processing completed successfully.")
-        logger.info("Visualization files have been saved in the 'output' directory:")
-        logger.info("- output/superpixels.png")
-        logger.info("- output/graph.png")
-        logger.info("- output/features.png")
-        if os.path.exists(model_path):
-            logger.info("- output/prediction_result.txt")
+        
+        if not os.path.exists(model_path) or not os.path.exists(scaler_path):
+            logger.error("Model not found. Train the model first.")
+            return
+            
+        classifier.load_model(model_path, scaler_path)
+        
+        # Evaluate model
+        logger.info("Evaluating model...")
+        evaluation_results = classifier.evaluate_model(X, labels)
+        
+        logger.info("Evaluation Complete")
+        logger.info("Check output directory for detailed results and visualizations")
 
     except Exception as e:
-        logger.error(f"Error during prediction: {str(e)}")
+        logger.error(f"Error during evaluation: {str(e)}")
         raise
 
 def main():
-    # Setup logging
+    """Main entry point."""
+    # Set up logging
     logger = setup_logging()
-
+    
     # Parse arguments
     args = parse_args()
-
-    try:
-        # Validate inputs
-        if args.mode == 'train':
-            if not args.melanoma_dir or not args.benign_dir:
-                raise ValueError("Training mode requires --melanoma-dir and --benign-dir")
-        else:  # predict mode
-            if not args.image:
-                raise ValueError("Prediction mode requires --image")
-            validate_image_path(args.image)
-
-        validate_parameters(vars(args))
-
-        # Execute requested mode
-        if args.mode == 'train':
-            train(args, logger)
-        else:
-            predict(args, logger)
-
-    except Exception as e:
-        logger.error(f"Error during processing: {str(e)}")
-        raise
+    
+    # Create necessary directories
+    os.makedirs('data/melanoma', exist_ok=True)
+    os.makedirs('data/benign', exist_ok=True)
+    os.makedirs('model', exist_ok=True)
+    os.makedirs('output', exist_ok=True)
+    
+    logger.info(f"Running in {args.mode} mode")
+    
+    # Execute based on mode
+    if args.mode == 'train':
+        train(args, logger)
+    elif args.mode == 'evaluate':
+        evaluate(args, logger)
 
 if __name__ == "__main__":
     main()

@@ -1,9 +1,8 @@
 [tool.poetry]
-name = "MelanomaGraphAnalysisV3"
+name = "MelanomaGraphAnalysis"
 version = "0.1.0"
-description = "MelanomaBenignClassifier"
-authors = ["Mohamed Abdelmoniem <ma3546@fayoum.edu.eg>"]
-
+description = "Melanoma detection using graph-based analysis"
+authors = ["Your Name <your.email@example.com>"]
 [tool.poetry.dependencies]
 python = ">=3.11"
 anthropic = ">=0.45.2"
@@ -16,6 +15,10 @@ scikit-image = ">=0.25.1"
 scikit-learn = ">=1.6.1"
 scipy = ">=1.15.1"
 pandas = ">=2.2.3"
-
+pywavelets = ">=1.4.1"
+opencv-python = ">=4.7.0"
+flask = ">=2.0.1"
+gunicorn = ">=20.1.0"
+seaborn = ">=0.12.2"
 [[tool.poetry.packages]]
 include = "src"

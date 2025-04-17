@@ -10,3 +10,6 @@ scikit-image
 scikit-learn
 scipy
 pandas
+pywavelets
+opencv-python
+seaborn
