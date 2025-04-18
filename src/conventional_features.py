@@ -2,6 +2,7 @@ import numpy as np
 import logging
 from skimage import color, feature, measure
 from skimage.feature import graycomatrix, graycoprops
+from skimage.morphology import convex_hull_image
 from scipy import ndimage
 import pywt
 import cv2
@@ -70,7 +71,7 @@ class ConventionalFeatureExtractor:
                 features['boundary_length'] = 0
             
             # Calculate convex hull and convexity
-            hull = measure.convex_hull_image(mask)
+            hull = convex_hull_image(mask)
             hull_perimeter = measure.perimeter(hull)
             features['convexity'] = hull_perimeter / regionprops.perimeter if regionprops.perimeter > 0 else 1
             
