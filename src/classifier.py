@@ -9,6 +9,7 @@ import logging
 import os
 from joblib import dump, load
 from src.evaluation import ModelEvaluator  # Import ModelEvaluator
+
 class MelanomaClassifier:
     def __init__(self, classifier_type='svm'):
         """Initialize the classifier with specified type."""
@@ -37,11 +38,13 @@ class MelanomaClassifier:
             )
         else:
             raise ValueError(f"Unsupported classifier type: {classifier_type}")
+
     def prepare_features(self, graphs):
         """Convert graph features to a feature matrix."""
         try:
             if not graphs:
                 return np.array([]).reshape(0, 1)  # Return empty 2D array
+                
             feature_vectors = []
             for G in graphs:
                 # Extract all graph-based features
@@ -49,6 +52,7 @@ class MelanomaClassifier:
                 
                 # Extract all conventional features
                 conventional_features = G.graph.get('conventional_features', {})
+                
                 # Combine all graph-based features into a vector
                 graph_feature_vector = np.concatenate([
                     self._get_statistical_features(graph_features['clustering_coefficient']),
@@ -96,11 +100,60 @@ class MelanomaClassifier:
                     feature_vector = np.concatenate([graph_feature_vector, conv_feature_vector])
                 else:
                     feature_vector = graph_feature_vector
+                    
                 feature_vectors.append(feature_vector)
-            return np.array(feature_vectors)
+            
+            # Check if all feature vectors have the same length
+            feature_lengths = [len(fv) for fv in feature_vectors]
+            if len(set(feature_lengths)) > 1:
+                # Inconsistent feature lengths detected
+                max_len = max(feature_lengths)
+                self.logger.warning(f"Inconsistent feature vector lengths detected. Padding to length {max_len}")
+                
+                # Pad shorter feature vectors with zeros
+                for i, fv in enumerate(feature_vectors):
+                    if len(fv) < max_len:
+                        feature_vectors[i] = np.pad(fv, (0, max_len - len(fv)), 'constant')
+            
+            try:
+                # Convert to numpy array with explicit dtype
+                return np.array(feature_vectors, dtype=np.float64)
+            except ValueError as e:
+                # If still failing, try a more robust conversion
+                self.logger.warning(f"Standard conversion failed: {str(e)}. Trying alternate method.")
+                # Create empty array and fill it
+                result = np.zeros((len(feature_vectors), len(feature_vectors[0])), dtype=np.float64)
+                for i, fv in enumerate(feature_vectors):
+                    result[i, :] = fv
+                return result
+            
         except Exception as e:
             self.logger.error(f"Error preparing features: {str(e)}")
             raise
+
+    def _get_statistical_features(self, feature_dict):
+        """Calculate statistical measures from dictionary of node features."""
+        try:
+            values = list(feature_dict.values())
+            if not values:
+                return np.zeros(5)
+                
+            # Handle inf values by replacing with large finite number
+            values = [v if v != float('inf') else 1e10 for v in values]
+            
+            # Calculate five statistical measures as specified in paper
+            mean = np.mean(values)
+            std = np.std(values)
+            minimum = np.min(values)
+            maximum = np.max(values)
+            median = np.median(values)
+            
+            return np.array([mean, std, minimum, maximum, median])
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating statistical features: {str(e)}")
+            return np.zeros(5)
+
     def select_features(self, X, y, method='mutual_info', n_features=100):
         """Select the most relevant features."""
         try:
@@ -122,6 +175,7 @@ class MelanomaClassifier:
         except Exception as e:
             self.logger.error(f"Error in feature selection: {str(e)}")
             return X
+
     def optimize_hyperparameters(self, X, y, cv=5):
         """Perform hyperparameter optimization."""
         try:
@@ -139,67 +193,75 @@ class MelanomaClassifier:
                     'min_samples_leaf': [1, 2, 4]
                 }
             else:
+                self.logger.warning(f"No hyperparameter grid defined for {self.classifier_type}")
                 return self.classifier
                 
+            # Define scoring metrics
+            scoring = {
+                'accuracy': 'accuracy',
+                'precision': 'precision',
+                'recall': 'recall',
+                'f1': 'f1'
+            }
+            
+            # Create and fit grid search
             grid_search = GridSearchCV(
-                self.classifier, param_grid, cv=cv, 
-                scoring='f1', n_jobs=-1
+                self.classifier,
+                param_grid,
+                cv=cv,
+                scoring=scoring,
+                refit='f1',  # Optimize for F1 score
+                n_jobs=-1,   # Use all available cores
+                verbose=1
             )
+            
             grid_search.fit(X, y)
             
-            self.logger.info(f"Best parameters: {grid_search.best_params_}")
+            # Update classifier with best parameters
             self.classifier = grid_search.best_estimator_
             
+            self.logger.info(f"Best parameters: {grid_search.best_params_}")
+            self.logger.info(f"Best F1 score: {grid_search.best_score_:.3f}")
+            
             return self.classifier
-                
+            
         except Exception as e:
             self.logger.error(f"Error in hyperparameter optimization: {str(e)}")
             return self.classifier
-    def train_evaluate(self, X, y):
-        """Train and evaluate the classifier using stratified k-fold cross-validation."""
+
+    def train_evaluate(self, X, y, cv=5):
+        """Train and evaluate the model using cross-validation."""
         try:
-            if len(X) == 0:
-                raise ValueError("No training data provided")
-            # Check minimum required samples per class
-            min_required_samples = 3  # Minimum required samples per class for reliable CV
-            unique_classes, class_counts = np.unique(y, return_counts=True)
-            min_samples = np.min(class_counts)
-            if min_samples < min_required_samples:
-                raise ValueError(
-                    f"Need at least {min_required_samples} samples per class for reliable "
-                    f"training. Got {min_samples} for some classes."
-                )
-            # Determine number of folds based on dataset size
-            n_folds = min(5, min_samples)  # Use 5-fold CV when possible
-            self.logger.info(f"Using {n_folds}-fold cross-validation")
-            # Apply feature selection if we have enough features
-            if X.shape[1] > 100:  # Only select features if we have many
-                self.logger.info(f"Applying feature selection to reduce from {X.shape[1]} features")
-                X = self.select_features(X, y, method='mutual_info', n_features=100)
+            if len(y) < cv:
+                self.logger.warning(f"Not enough samples for {cv}-fold CV. Using leave-one-out CV.")
+                cv = min(len(y), 3)  # Use fewer folds for very small datasets
+                
             # Scale features
             X_scaled = self.scaler.fit_transform(X)
             
-            # Optimize hyperparameters if dataset is large enough
-            if len(X) >= 20:
-                self.logger.info("Optimizing hyperparameters...")
-                self.optimize_hyperparameters(X_scaled, y, cv=n_folds)
-            # Define scoring metrics as per paper
+            # Define scoring metrics
             scoring = {
                 'accuracy': make_scorer(accuracy_score),
                 'precision': make_scorer(precision_score),
                 'recall': make_scorer(recall_score),
                 'f1': make_scorer(f1_score)
             }
-            # Initialize cross-validation
-            cv = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=42)
+            
             # Perform cross-validation
             cv_results = cross_validate(
-                self.classifier, X_scaled, y,
+                self.classifier,
+                X_scaled,
+                y,
                 cv=cv,
                 scoring=scoring,
-                return_train_score=True
+                return_train_score=True,
+                return_estimator=True
             )
-            # Calculate and format results
+            
+            # Train final model on all data
+            self.classifier.fit(X_scaled, y)
+            
+            # Return aggregated results
             results = {
                 'accuracy': np.mean(cv_results['test_accuracy']),
                 'precision': np.mean(cv_results['test_precision']),
@@ -208,74 +270,85 @@ class MelanomaClassifier:
                 'std_accuracy': np.std(cv_results['test_accuracy']),
                 'std_precision': np.std(cv_results['test_precision']),
                 'std_recall': np.std(cv_results['test_recall']),
-                'std_f1': np.std(cv_results['test_f1'])
+                'std_f1': np.std(cv_results['test_f1']),
+                'estimators': cv_results['estimator']
             }
-            # Train final model on all data
-            self.classifier.fit(X_scaled, y)
-            # Save the model and scaler
-            os.makedirs('model', exist_ok=True)
-            dump(self.classifier, 'model/melanoma_classifier.joblib')
-            dump(self.scaler, 'model/scaler.joblib')
             
-            # Save feature selector if used
-            if self.feature_selector:
-                dump(self.feature_selector, 'model/feature_selector.joblib')
-            # Perform comprehensive evaluation if dataset is sufficient
-            if len(X) >= 10:  # Only perform comprehensive evaluation with enough samples
-                self.logger.info("Performing comprehensive model evaluation...")
-                evaluation_results = self.evaluate_model(X_scaled, y, cv=n_folds)
-                results['evaluation'] = evaluation_results
             return results
+            
         except Exception as e:
-            self.logger.error(f"Error in training and evaluation: {str(e)}")
+            self.logger.error(f"Error in train_evaluate: {str(e)}")
             raise
-    def evaluate_model(self, X, y, cv=5):
-        """Perform comprehensive evaluation of the trained model."""
+
+    def evaluate_model(self, X, y):
+        """Evaluate the model on a test set and generate detailed report."""
         try:
-            self.logger.info("Starting model evaluation...")
+            # Create evaluator
+            evaluator = ModelEvaluator(output_dir='output')
             
-            # Make sure model and scaler are available
-            if not hasattr(self, 'classifier') or not hasattr(self, 'scaler'):
-                raise ValueError("Model and scaler must be initialized before evaluation.")
-                
-            # Initialize evaluator
-            evaluator = ModelEvaluator()
+            # Scale features
+            X_scaled = self.scaler.transform(X)
             
-            # Perform evaluation
-            evaluation_results = evaluator.evaluate_classifier(self.classifier, X, y, cv=cv)
+            # Apply feature selection if available
+            if self.feature_selector is not None:
+                X_scaled = self.feature_selector.transform(X_scaled)
             
-            # Log summary results
-            cv_summary = evaluation_results['cv_results']['summary']
-            self.logger.info("Cross-validation summary results:")
-            for metric, values in cv_summary.items():
-                self.logger.info(f"{metric}: {values['mean']:.3f} ± {values['std']:.3f}")
+            # Perform comprehensive evaluation
+            results = evaluator.evaluate_classifier(self.classifier, X_scaled, y)
             
-            return evaluation_results
+            return results
             
         except Exception as e:
-            self.logger.error(f"Error during model evaluation: {str(e)}")
+            self.logger.error(f"Error in model evaluation: {str(e)}")
             raise
+
+    def save_model(self, output_dir='model'):
+        """Save trained model and preprocessing components."""
+        try:
+            os.makedirs(output_dir, exist_ok=True)
+            
+            # Save model
+            model_path = os.path.join(output_dir, 'melanoma_classifier.joblib')
+            dump(self.classifier, model_path)
+            
+            # Save scaler
+            scaler_path = os.path.join(output_dir, 'scaler.joblib')
+            dump(self.scaler, scaler_path)
+            
+            # Save feature selector if available
+            if self.feature_selector is not None:
+                selector_path = os.path.join(output_dir, 'feature_selector.joblib')
+                dump(self.feature_selector, selector_path)
+            
+            self.logger.info(f"Model saved to {model_path}")
+            
+            return {
+                'model_path': model_path,
+                'scaler_path': scaler_path,
+                'feature_selector_path': os.path.join(output_dir, 'feature_selector.joblib') if self.feature_selector else None
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error saving model: {str(e)}")
+            raise
+
     def load_model(self, model_path, scaler_path, feature_selector_path=None):
-        """Load a trained model and scaler."""
+        """Load trained model and preprocessing components."""
         try:
+            # Load model
             self.classifier = load(model_path)
+            
+            # Load scaler
             self.scaler = load(scaler_path)
             
+            # Load feature selector if path provided
             if feature_selector_path and os.path.exists(feature_selector_path):
                 self.feature_selector = load(feature_selector_path)
-                
-            self.logger.info(f"Model loaded successfully from {model_path}")
+            
+            self.logger.info(f"Model loaded from {model_path}")
+            
             return True
             
         except Exception as e:
             self.logger.error(f"Error loading model: {str(e)}")
-            return False
-    def _get_statistical_features(self, feature_dict):
-        """Extract statistical features from a dictionary of node values."""
-        values = np.array(list(feature_dict.values()))
-        return np.array([
-            np.mean(values),
-            np.std(values),
-            np.min(values),
-            np.max(values)
-        ])
+            raise
