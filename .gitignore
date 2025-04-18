@@ -1,0 +1,10 @@
+data/
+app.log
+src/__pycache__/classifier.cpython-313.pyc
+src/__pycache__/conventional_features.cpython-313.pyc
+src/__pycache__/evaluation.cpython-313.pyc
+src/__pycache__/feature_extraction.cpython-313.pyc
+src/__pycache__/graph_construction.cpython-313.pyc
+src/__pycache__/image_validator.cpython-313.pyc
+src/__pycache__/superpixel.cpython-313.pyc
+.DS_Store
