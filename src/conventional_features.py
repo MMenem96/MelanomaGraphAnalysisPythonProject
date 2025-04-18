@@ -6,6 +6,7 @@ from skimage.morphology import convex_hull_image
 from scipy import ndimage
 import pywt
 import cv2
+
 class ConventionalFeatureExtractor:
     def __init__(self):
         """Initialize the conventional feature extractor."""
@@ -170,94 +171,127 @@ class ConventionalFeatureExtractor:
             return {}
             
     def extract_texture_features(self, image, mask):
-        """Extract texture features using various methods."""
+        """Extract texture features using GLCM, LBP, and wavelets."""
         try:
             features = {}
             
-            # Convert to grayscale for texture analysis
+            # Convert to grayscale if needed
             if len(image.shape) == 3 and image.shape[2] >= 3:
-                gray_image = color.rgb2gray(image[:,:,:3])
-            elif len(image.shape) == 3:
-                gray_image = image[:,:,0].astype(float)
+                gray = color.rgb2gray(image[:,:,:3])
             else:
-                gray_image = image.astype(float)
+                gray = image.copy()
+                if len(gray.shape) == 3:
+                    gray = gray[:,:,0]
             
-            # Normalize to 8-bit for GLCM
-            gray_image_8bit = (gray_image * 255).astype(np.uint8)
-            
-            # Only consider pixels within the mask
-            masked_gray = np.zeros_like(gray_image_8bit)
-            masked_gray[mask] = gray_image_8bit[mask]
-            
-            # Check if we have enough pixels for texture analysis
-            if np.sum(mask) <= 5:
-                self.logger.warning("Not enough pixels in mask for texture analysis")
-                return features
+            # Ensure values are in [0, 1] range
+            if np.max(gray) > 1.0:
+                gray = gray / 255.0
                 
-            # GLCM features (Haralick)
-            distances = [1, 3]  # Distance between pixel pairs
-            angles = [0, np.pi/4, np.pi/2, 3*np.pi/4]  # Angles to consider
+            # Create masked version for analysis
+            masked_gray = gray.copy()
+            masked_gray[~mask] = 0
             
-            # Make sure we have some intensity variation
-            if np.max(masked_gray) > np.min(masked_gray):
-                try:
-                    # Reduce levels to avoid sparse matrices with few pixels
-                    levels = min(256, np.sum(mask))
-                    levels = max(2, min(levels, 16))  # Between 2 and 16 levels
-                    
-                    # Rescale to reduced levels
-                    masked_scaled = np.interp(masked_gray, 
-                                            (np.min(masked_gray), np.max(masked_gray)), 
-                                            (0, levels-1)).astype(np.uint8)
-                    
-                    glcm = graycomatrix(masked_scaled, distances, angles, 
-                                       levels=levels, symmetric=True, normed=True)
-                    
-                    # Compute Haralick texture features
-                    properties = ['contrast', 'dissimilarity', 'homogeneity', 
-                                  'energy', 'correlation', 'ASM']
-                    
-                    for prop in properties:
-                        propmatrix = graycoprops(glcm, prop)
-                        for d_idx, distance in enumerate(distances):
-                            for a_idx, angle in enumerate(angles):
-                                features[f'glcm_{prop}_d{distance}_a{int(angle*180/np.pi)}'] = float(propmatrix[d_idx, a_idx])
-                except Exception as e:
-                    self.logger.warning(f"Failed to compute GLCM: {str(e)}")
+            # Quantize to 8 levels for GLCM (prevent memory issues)
+            gray_quantized = np.round(gray * 7).astype(np.uint8)
             
-            # Wavelet features
-            # Apply wavelet transform
-            try:
-                coeffs = pywt.dwt2(gray_image, 'db1')
-                # Extract energy from each coefficient
-                cA, (cH, cV, cD) = coeffs
-                features['wavelet_cA_energy'] = float(np.mean(cA**2))
-                features['wavelet_cH_energy'] = float(np.mean(cH**2))
-                features['wavelet_cV_energy'] = float(np.mean(cV**2))
-                features['wavelet_cD_energy'] = float(np.mean(cD**2))
-            except Exception as e:
-                self.logger.warning(f"Failed to compute wavelet features: {str(e)}")
-                features['wavelet_cA_energy'] = 0.0
-                features['wavelet_cH_energy'] = 0.0
-                features['wavelet_cV_energy'] = 0.0
-                features['wavelet_cD_energy'] = 0.0
+            # GLCM features
+            distances = [1, 2]
+            angles = [0, np.pi/4, np.pi/2, 3*np.pi/4]
             
-            # Apply LBP (Local Binary Pattern)
+            for d in distances:
+                for a_idx, angle in enumerate(angles):
+                    try:
+                        # Compute GLCM
+                        glcm = graycomatrix(gray_quantized, 
+                                           distances=[d], 
+                                           angles=[angle], 
+                                           levels=8,
+                                           symmetric=True, 
+                                           normed=True)
+                        
+                        # Compute GLCM properties
+                        props = ['contrast', 'dissimilarity', 'homogeneity', 'energy', 'correlation', 'ASM']
+                        for prop in props:
+                            value = graycoprops(glcm, prop)[0, 0]
+                            features[f'glcm_{prop}_d{d}_a{a_idx}'] = float(value)
+                    except:
+                        # If GLCM fails, set default values
+                        props = ['contrast', 'dissimilarity', 'homogeneity', 'energy', 'correlation', 'ASM']
+                        for prop in props:
+                            features[f'glcm_{prop}_d{d}_a{a_idx}'] = 0.0
+            
+            # Local Binary Patterns
             try:
                 radius = 3
                 n_points = 8 * radius
-                lbp = feature.local_binary_pattern(gray_image, n_points, radius, method='uniform')
-                
-                # Only consider pixels within the mask
+                # Convert to uint8 to avoid warning with local_binary_pattern
+                gray_uint8 = (gray * 255).astype(np.uint8)
+                lbp = feature.local_binary_pattern(gray_uint8, n_points, radius, method='uniform')
                 lbp_masked = lbp[mask]
+                
                 if len(lbp_masked) > 0:
-                    lbp_hist, _ = np.histogram(lbp_masked, bins=n_points+2, range=(0, n_points+2), density=True)
-                    
-                    # Add LBP histogram features
-                    for i, value in enumerate(lbp_hist):
-                        features[f'lbp_hist_{i}'] = float(value)
-            except Exception as e:
-                self.logger.warning(f"Failed to compute LBP features: {str(e)}")
+                    # LBP histogram
+                    hist, _ = np.histogram(lbp_masked, bins=n_points+2, density=True)
+                    for i, val in enumerate(hist):
+                        features[f'lbp_hist_{i}'] = float(val)
+                else:
+                    for i in range(n_points+2):
+                        features[f'lbp_hist_{i}'] = 0.0
+            except:
+                for i in range(n_points+2 if 'n_points' in locals() else 26):
+                    features[f'lbp_hist_{i}'] = 0.0
+            
+            # Wavelet features
+            try:
+                # Apply 2D wavelet transform
+                coeffs = pywt.wavedec2(masked_gray, 'db1', level=2)
+                
+                # Extract statistical features from each coefficient matrix
+                for level, coeff_data in enumerate(coeffs):
+                    if level == 0:  # Approximation
+                        cA = coeff_data
+                        features[f'wavelet_approx_mean'] = float(np.mean(np.abs(cA)))
+                        features[f'wavelet_approx_std'] = float(np.std(cA))
+                        features[f'wavelet_approx_energy'] = float(np.sum(cA**2))
+                    else:  # Details
+                        for i, c_type in enumerate(['horizontal', 'vertical', 'diagonal']):
+                            c = coeff_data[i]
+                            features[f'wavelet_{c_type}_{level}_mean'] = float(np.mean(np.abs(c)))
+                            features[f'wavelet_{c_type}_{level}_std'] = float(np.std(c))
+                            features[f'wavelet_{c_type}_{level}_energy'] = float(np.sum(c**2))
+            except:
+                # Default wavelet features if transform fails
+                prefixes = ['wavelet_approx'] + [f'wavelet_{d}_{l}' for l in [1, 2] for d in ['horizontal', 'vertical', 'diagonal']]
+                for prefix in prefixes:
+                    for stat in ['mean', 'std', 'energy']:
+                        features[f'{prefix}_{stat}'] = 0.0
+            
+            # Gradient features
+            try:
+                # Compute gradient magnitude and direction
+                sobelx = cv2.Sobel(masked_gray, cv2.CV_64F, 1, 0, ksize=3)
+                sobely = cv2.Sobel(masked_gray, cv2.CV_64F, 0, 1, ksize=3)
+                
+                magnitude = np.sqrt(sobelx**2 + sobely**2)
+                direction = np.arctan2(sobely, sobelx)
+                
+                # Extract statistical features from gradient information
+                features['gradient_mag_mean'] = float(np.mean(magnitude[mask]))
+                features['gradient_mag_std'] = float(np.std(magnitude[mask]))
+                features['gradient_dir_mean'] = float(np.mean(direction[mask]))
+                features['gradient_dir_std'] = float(np.std(direction[mask]))
+                
+                # Gradient histogram (binned by direction)
+                hist, _ = np.histogram(direction[mask], bins=8, range=(-np.pi, np.pi), density=True)
+                for i, val in enumerate(hist):
+                    features[f'gradient_dir_hist_{i}'] = float(val)
+            except:
+                features['gradient_mag_mean'] = 0.0
+                features['gradient_mag_std'] = 0.0
+                features['gradient_dir_mean'] = 0.0
+                features['gradient_dir_std'] = 0.0
+                for i in range(8):
+                    features[f'gradient_dir_hist_{i}'] = 0.0
             
             return features
             
