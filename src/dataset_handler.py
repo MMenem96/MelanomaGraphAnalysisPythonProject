@@ -130,7 +130,7 @@ class DatasetHandler:
         except Exception as e:
             self.logger.error(f"Error splitting dataset: {str(e)}")
             raise
-    def save_feature_matrix(self, graphs, labels, output_path='data/features.csv'):
+    def save_feature_matrix(self, graphs, labels, output_path='output/features.csv'):
         """Save extracted features to a CSV file with labels."""
         try:
             # Create feature matrix
