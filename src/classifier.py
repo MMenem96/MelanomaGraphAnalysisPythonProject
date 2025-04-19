@@ -247,6 +247,9 @@ class MelanomaClassifier:
             unique_classes, class_counts = np.unique(y, return_counts=True)
             min_class_count = np.min(class_counts)
             
+            # Log total number of features
+            self.logger.info(f"Training with {X.shape[1]} features")
+            
             # Adjust CV to be at most the minimum class count
             if min_class_count < cv:
                 self.logger.warning(f"Reducing CV folds from {cv} to {min_class_count} due to limited samples in smallest class")
@@ -317,6 +320,9 @@ class MelanomaClassifier:
             # Create evaluator
             evaluator = ModelEvaluator(output_dir='output')
             
+            # Log number of features in evaluation
+            self.logger.info(f"Evaluating with {X.shape[1]} features")
+            
             # Check for NaN values in input features before scaling
             if np.isnan(X).any():
                 self.logger.warning("NaN values found in evaluation features. Replacing with zeros.")
@@ -330,14 +336,11 @@ class MelanomaClassifier:
                 self.logger.warning("NaN values found after scaling in evaluation. Replacing with zeros.")
                 X_scaled = np.nan_to_num(X_scaled, nan=0.0)
             
-            # Apply feature selection if available
+            # We're no longer using feature selection to ensure consistency
+            # The feature_selector will be None for new models
             if self.feature_selector is not None:
-                X_scaled = self.feature_selector.transform(X_scaled)
-                
-                # Check for NaN values after feature selection
-                if np.isnan(X_scaled).any():
-                    self.logger.warning("NaN values found after feature selection. Replacing with zeros.")
-                    X_scaled = np.nan_to_num(X_scaled, nan=0.0)
+                # Just log a warning but don't apply the transformation
+                self.logger.warning("Feature selector exists but will not be used to ensure dimension consistency")
             
             # Perform comprehensive evaluation
             results = evaluator.evaluate_classifier(self.classifier, X_scaled, y)

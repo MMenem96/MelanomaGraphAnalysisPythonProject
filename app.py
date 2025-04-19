@@ -329,7 +329,7 @@ def analyze():
                 'features_extracted': len(X[0])
             }
             
-            # store this in a database
+            # In a real app, you'd store this in a database
             
             return render_template('results.html', 
                                  result=result,
@@ -429,9 +429,9 @@ def api_predict():
         X = classifier.prepare_features([G])
         X_scaled = scaler.transform(X)
         
-        # Apply feature selection if available
+        # Skip feature selection to ensure dimension consistency
         if feature_selector is not None:
-            X_scaled = feature_selector.transform(X_scaled)
+            app.logger.warning("Feature selector exists but will not be used to ensure dimension consistency")
             
         probability = model.predict_proba(X_scaled)[0][1]
         risk_level = "HIGH" if probability > 0.5 else "LOW"

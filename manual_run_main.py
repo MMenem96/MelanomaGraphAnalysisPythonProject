@@ -84,6 +84,8 @@ def train(args, logger):
         logger.info("Preparing features...")
         X_train = classifier.prepare_features(train_graphs)
         X_test = classifier.prepare_features(test_graphs)
+        
+        logger.info(f"Feature matrix shape: {X_train.shape} with {X_train.shape[1]} features")
 
         # Train and evaluate
         logger.info("Training and evaluating model...")
