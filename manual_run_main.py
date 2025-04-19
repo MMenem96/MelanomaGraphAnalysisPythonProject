@@ -101,6 +101,12 @@ def train(args, logger):
         logger.info("Performing evaluation on test set...")
         test_evaluation = classifier.evaluate_model(X_test, test_labels)
         
+        # Save the model
+        logger.info("Saving model to model directory...")
+        model_info = classifier.save_model(output_dir='model')
+        logger.info(f"Model saved to {model_info['model_path']}")
+        logger.info(f"Scaler saved to {model_info['scaler_path']}")
+        
         logger.info("Test Set Evaluation Complete")
         logger.info("Check output directory for detailed results and visualizations")
 
