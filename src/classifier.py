@@ -243,9 +243,19 @@ class MelanomaClassifier:
     def train_evaluate(self, X, y, cv=5):
         """Train and evaluate the model using cross-validation."""
         try:
-            if len(y) < cv:
-                self.logger.warning(f"Not enough samples for {cv}-fold CV. Using leave-one-out CV.")
-                cv = min(len(y), 3)  # Use fewer folds for very small datasets
+            # Count samples in each class to determine appropriate CV
+            unique_classes, class_counts = np.unique(y, return_counts=True)
+            min_class_count = np.min(class_counts)
+            
+            # Adjust CV to be at most the minimum class count
+            if min_class_count < cv:
+                self.logger.warning(f"Reducing CV folds from {cv} to {min_class_count} due to limited samples in smallest class")
+                cv = min_class_count
+            
+            # Ensure at least 2 folds
+            if cv < 2:
+                cv = 2
+                self.logger.warning(f"Using minimum 2-fold CV due to very limited samples")
                 
             # Check for NaN values in input features before scaling
             if np.isnan(X).any():

@@ -26,6 +26,10 @@ def parse_args():
     parser.add_argument('--benign-dir', type=str, default='data/benign',
                         help='Directory containing benign lesion images')
     
+    # Dataset balance parameters
+    parser.add_argument('--max-images-per-class', type=int, default=2000,
+                        help='Maximum number of images to use per class for balanced dataset')
+    
     # Model parameters
     parser.add_argument('--classifier', type=str, choices=['svm', 'rf'], default='svm',
                         help='Type of classifier to use')
@@ -53,7 +57,8 @@ def train(args, logger):
         dataset_handler = DatasetHandler(
             n_segments=args.n_segments,
             compactness=args.compactness,
-            connectivity_threshold=args.connectivity_threshold
+            connectivity_threshold=args.connectivity_threshold,
+            max_images_per_class=args.max_images_per_class
         )
 
         # Process dataset
@@ -108,7 +113,8 @@ def evaluate(args, logger):
         dataset_handler = DatasetHandler(
             n_segments=args.n_segments,
             compactness=args.compactness,
-            connectivity_threshold=args.connectivity_threshold
+            connectivity_threshold=args.connectivity_threshold,
+            max_images_per_class=args.max_images_per_class
         )
 
         # Process test dataset
