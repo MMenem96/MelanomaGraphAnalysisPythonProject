@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="py-5 bg-dark text-light">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto text-center">
+                <h1 class="mb-3">Train Melanoma Detection Model</h1>
+                <p class="lead">Upload labeled images to train the classifier for more accurate melanoma detection.</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section class="py-5">
+    <div class="container">
+        <div class="row justify-content-center">
+            <div class="col-lg-10">
+                <div class="card shadow-sm mb-5">
+                    <div class="card-body p-4">
+                        <h2 class="h4 mb-4"><i class="bi bi-info-circle-fill me-2" style="color: var(--primary-blue);"></i>Dataset Preparation Instructions</h2>
+                        
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h3 class="h5 mb-3"><i class="bi bi-exclamation-triangle-fill me-2 text-danger"></i>Melanoma Images</h3>
+                                <p>Place dermoscopic images of confirmed melanoma lesions in the <code>data/melanoma/</code> directory.</p>
+                                <ul>
+                                    <li>Use high-quality dermoscopic images</li>
+                                    <li>Ensure proper lighting and focus</li>
+                                    <li>Images should be in JPG or PNG format</li>
+                                    <li>Lesion should be clearly visible and centered</li>
+                                </ul>
+                            </div>
+                            <div class="col-md-6">
+                                <h3 class="h5 mb-3"><i class="bi bi-check-circle-fill me-2 text-success"></i>Benign Images</h3>
+                                <p>Place dermoscopic images of confirmed benign lesions in the <code>data/benign/</code> directory.</p>
+                                <ul>
+                                    <li>Include various types of benign lesions</li>
+                                    <li>Maintain consistent image quality</li>
+                                    <li>Images should be in JPG or PNG format</li>
+                                    <li>Avoid images with multiple lesions</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="row mb-5">
+                    <div class="col-md-6">
+                        <div class="card h-100 shadow-sm">
+                            <div class="card-header">
+                                <h3 class="h5 mb-0">Upload Melanoma Images</h3>
+                            </div>
+                            <div class="card-body">
+                                <form action="/upload_training_images" method="POST" enctype="multipart/form-data">
+                                    <input type="hidden" name="image_type" value="melanoma">
+                                    <div class="mb-3">
+                                        <label for="melanoma_images" class="form-label">Select melanoma images</label>
+                                        <input class="form-control" type="file" id="melanoma_images" name="images" multiple accept="image/*">
+                                    </div>
+                                    <button type="submit" class="btn btn-primary">Upload Melanoma Images</button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card h-100 shadow-sm">
+                            <div class="card-header">
+                                <h3 class="h5 mb-0">Upload Benign Images</h3>
+                            </div>
+                            <div class="card-body">
+                                <form action="/upload_training_images" method="POST" enctype="multipart/form-data">
+                                    <input type="hidden" name="image_type" value="benign">
+                                    <div class="mb-3">
+                                        <label for="benign_images" class="form-label">Select benign images</label>
+                                        <input class="form-control" type="file" id="benign_images" name="images" multiple accept="image/*">
+                                    </div>
+                                    <button type="submit" class="btn btn-primary">Upload Benign Images</button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="card shadow-sm">
+                    <div class="card-body p-4">
+                        <h2 class="h4 mb-4"><i class="bi bi-cpu-fill me-2" style="color: var(--primary-blue);"></i>Train Classifier</h2>
+                        <form action="/train" method="POST">
+                            <div class="row g-3">
+                                <div class="col-md-6">
+                                    <label for="n_segments" class="form-label">Number of Superpixels</label>
+                                    <input type="number" class="form-control" id="n_segments" name="n_segments" value="20" min="10" max="100">
+                                    <div class="form-text">Number of superpixels to segment the image into (default: 20)</div>
+                                </div>
+                                <div class="col-md-6">
+                                    <label for="compactness" class="form-label">Compactness</label>
+                                    <input type="number" class="form-control" id="compactness" name="compactness" value="10" min="1" max="100" step="0.1">
+                                    <div class="form-text">Compactness parameter for SLIC algorithm (default: 10)</div>
+                                </div>
+                                <div class="col-md-6">
+                                    <label for="connectivity_threshold" class="form-label">Connectivity Threshold</label>
+                                    <input type="number" class="form-control" id="connectivity_threshold" name="connectivity_threshold" value="0.5" min="0" max="1" step="0.05">
+                                    <div class="form-text">Threshold for connecting superpixels in the graph (default: 0.5)</div>
+                                </div>
+                                <div class="col-md-6">
+                                    <label for="classifier" class="form-label">Classifier Type</label>
+                                    <select class="form-select" id="classifier" name="classifier">
+                                        <option value="svm" selected>Support Vector Machine</option>
+                                        <option value="rf">Random Forest</option>
+                                    </select>
+                                    <div class="form-text">Type of machine learning classifier to use</div>
+                                </div>
+                            </div>
+                            <div class="mt-4 text-center">
+                                <button type="submit" class="btn btn-primary btn-lg">Train Model</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock %}
