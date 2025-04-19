@@ -13,3 +13,4 @@ pandas
 pywavelets
 opencv-python
 seaborn
+flask_sqlalchemy
