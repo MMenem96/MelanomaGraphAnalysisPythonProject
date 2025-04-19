@@ -117,14 +117,25 @@ class MelanomaClassifier:
             
             try:
                 # Convert to numpy array with explicit dtype
-                return np.array(feature_vectors, dtype=np.float64)
+                features_array = np.array(feature_vectors, dtype=np.float64)
+                
+                # Check for and handle NaN values
+                if np.isnan(features_array).any():
+                    self.logger.warning(f"NaN values detected in feature array. Replacing with zeros.")
+                    # Replace NaN with zeros
+                    features_array = np.nan_to_num(features_array, nan=0.0)
+                
+                return features_array
             except ValueError as e:
                 # If still failing, try a more robust conversion
                 self.logger.warning(f"Standard conversion failed: {str(e)}. Trying alternate method.")
                 # Create empty array and fill it
                 result = np.zeros((len(feature_vectors), len(feature_vectors[0])), dtype=np.float64)
                 for i, fv in enumerate(feature_vectors):
-                    result[i, :] = fv
+                    # Convert any potential NaN values to zeros
+                    fv_array = np.array(fv, dtype=np.float64)
+                    fv_array = np.nan_to_num(fv_array, nan=0.0)
+                    result[i, :] = fv_array
                 return result
             
         except Exception as e:
@@ -236,8 +247,18 @@ class MelanomaClassifier:
                 self.logger.warning(f"Not enough samples for {cv}-fold CV. Using leave-one-out CV.")
                 cv = min(len(y), 3)  # Use fewer folds for very small datasets
                 
+            # Check for NaN values in input features before scaling
+            if np.isnan(X).any():
+                self.logger.warning("NaN values found in input features. Replacing with zeros.")
+                X = np.nan_to_num(X, nan=0.0)
+                
             # Scale features
             X_scaled = self.scaler.fit_transform(X)
+            
+            # Double-check for NaN values after scaling (some scalers can introduce NaNs)
+            if np.isnan(X_scaled).any():
+                self.logger.warning("NaN values found after scaling. Replacing with zeros.")
+                X_scaled = np.nan_to_num(X_scaled, nan=0.0)
             
             # Define scoring metrics
             scoring = {
@@ -286,12 +307,27 @@ class MelanomaClassifier:
             # Create evaluator
             evaluator = ModelEvaluator(output_dir='output')
             
+            # Check for NaN values in input features before scaling
+            if np.isnan(X).any():
+                self.logger.warning("NaN values found in evaluation features. Replacing with zeros.")
+                X = np.nan_to_num(X, nan=0.0)
+            
             # Scale features
             X_scaled = self.scaler.transform(X)
+            
+            # Double-check for NaN values after scaling
+            if np.isnan(X_scaled).any():
+                self.logger.warning("NaN values found after scaling in evaluation. Replacing with zeros.")
+                X_scaled = np.nan_to_num(X_scaled, nan=0.0)
             
             # Apply feature selection if available
             if self.feature_selector is not None:
                 X_scaled = self.feature_selector.transform(X_scaled)
+                
+                # Check for NaN values after feature selection
+                if np.isnan(X_scaled).any():
+                    self.logger.warning("NaN values found after feature selection. Replacing with zeros.")
+                    X_scaled = np.nan_to_num(X_scaled, nan=0.0)
             
             # Perform comprehensive evaluation
             results = evaluator.evaluate_classifier(self.classifier, X_scaled, y)
