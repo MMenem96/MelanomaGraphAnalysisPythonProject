@@ -1,14 +1,6 @@
-Training Results:
 
-Accuracy: 0.781 ± 0.018 (78.1% with low variation)
-Precision: 0.755 ± 0.023 (75.5% with low variation)
-Recall: 0.839 ± 0.008 (83.9% with very low variation)
-
-
-Test Set Evaluation:
-
-Accuracy: 0.781 (78.1%)
-Precision: 0.739 (73.9%)
-Recall: 0.845 (84.5%)
-F1 Score: 0.788 (78.8%)
-AUC: 0.872 (87.2%)
+2025-04-19 12:54:53,485 - src.evaluation - INFO - Accuracy: 0.875
+2025-04-19 12:54:53,485 - src.evaluation - INFO - Precision: 0.842
+2025-04-19 12:54:53,485 - src.evaluation - INFO - Recall: 0.889
+2025-04-19 12:54:53,485 - src.evaluation - INFO - F1 Score: 0.865
+2025-04-19 12:54:53,485 - src.evaluation - INFO - AUC: 0.942
