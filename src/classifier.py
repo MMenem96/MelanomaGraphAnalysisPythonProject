@@ -16,7 +16,9 @@ class MelanomaClassifier:
         self.logger = logging.getLogger(__name__)
         self.classifier_type = classifier_type
         self.scaler = StandardScaler()
+        # Always keep feature_selector as None to ensure we use all features
         self.feature_selector = None
+        self.logger.info("Initializing classifier without feature selection to ensure dimension consistency")
         # Initialize classifier based on type with parameters from paper
         if classifier_type == 'svm':
             self.classifier = SVC(

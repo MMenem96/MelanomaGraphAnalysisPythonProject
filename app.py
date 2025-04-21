@@ -56,6 +56,11 @@ def index():
 def about():
     """Render the about page with information on the melanoma detection method."""
     return render_template('about.html')
+    
+@app.route('/comparison')
+def comparison():
+    """Render the model comparison page showing performance tables."""
+    return render_template('comparison.html')
 
 @app.route('/history')
 def history():
