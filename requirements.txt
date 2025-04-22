@@ -14,3 +14,4 @@ pywavelets
 opencv-python
 seaborn
 flask_sqlalchemy
+tensorflow
