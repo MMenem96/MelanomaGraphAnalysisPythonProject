@@ -2,6 +2,7 @@ import numpy as np
 from skimage.segmentation import slic
 from skimage import color
 import logging
+
 class SuperpixelGenerator:
     def __init__(self, n_segments=20, compactness=10, sigma=1):
         """Initialize superpixel generator with segmentation parameters."""
@@ -9,6 +10,7 @@ class SuperpixelGenerator:
         self.compactness = compactness
         self.sigma = sigma
         self.logger = logging.getLogger(__name__)
+        
     def generate_superpixels(self, image):
         """Generate superpixels for an image using SLIC."""
         try:
@@ -26,6 +28,7 @@ class SuperpixelGenerator:
         except Exception as e:
             self.logger.error(f"Error generating superpixels: {str(e)}")
             raise
+            
     def compute_superpixel_features(self, image, segments):
         """Compute features for each superpixel."""
         try:

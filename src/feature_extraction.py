@@ -147,16 +147,18 @@ class FeatureExtractor:
 
             # Add new spectral features from the paper
             # Spectral power - average squared magnitude of GFT coefficients
-            features['spectral_power'] = float(np.mean(gft_coeffs**2))
+            features['spectral_power'] = float(np.mean(np.square(gft_coeffs)))
             
-            # Spectral entropy - distribution of energy across frequencies
-            # Normalize coefficients to get probability-like distribution
-            norm_coeffs = np.abs(gft_coeffs) / (np.sum(np.abs(gft_coeffs)) + 1e-10)
-            entropy = -np.sum(norm_coeffs * np.log2(norm_coeffs + 1e-10))
-            features['spectral_entropy'] = float(entropy)
+            # Spectral entropy - information content in GFT coefficients
+            spectral_entropy = 0.0
+            if np.any(gft_coeffs):
+                normalized_coeffs = np.abs(gft_coeffs) / np.sum(np.abs(gft_coeffs))
+                entropy_terms = normalized_coeffs * np.log2(normalized_coeffs + 1e-10)
+                spectral_entropy = -np.sum(entropy_terms)
+            features['spectral_entropy'] = float(spectral_entropy)
             
-            # Spectral amplitude - maximum coefficient
-            features['spectral_amplitude'] = float(np.max(np.abs(gft_coeffs)))
+            # Spectral amplitude - average magnitude of GFT coefficients
+            features['spectral_amplitude'] = float(np.mean(np.abs(gft_coeffs)))
 
         except Exception as e:
             self.logger.error(f"Error in spectral feature extraction: {str(e)}")
@@ -165,39 +167,35 @@ class FeatureExtractor:
         return features
 
     def _compute_gft_features(self, G, eigenvecs):
-        """Compute GFT features for node signals as specified in paper."""
+        """Compute graph Fourier transform coefficients for node signals."""
         try:
-            # Get node features as signals (using multiple color channels)
-            # Initialize signals with 3 channels (Lab color)
-            node_signals = np.zeros((len(G.nodes()), 3))
+            # Create a signal on the graph nodes
+            # Use degree as the signal as suggested in paper
+            degree_dict = dict(G.degree(weight='weight'))
+            signal = np.array([degree_dict[i] for i in sorted(G.nodes())])
             
-            for i, n in enumerate(G.nodes()):
-                if 'features' in G.nodes[n]:
-                    # Extract LAB color values (first 3 features)
-                    node_signals[i] = G.nodes[n]['features'][:3]
+            # Normalize the signal
+            if np.max(signal) > np.min(signal):
+                signal = (signal - np.min(signal)) / (np.max(signal) - np.min(signal))
             
-            # Apply GFT using eigenvectors as per paper equations
-            # For each channel, compute the GFT separately
-            gft_coeffs = []
-            for channel in range(node_signals.shape[1]):
-                channel_signal = node_signals[:, channel]
-                # Transform signal to frequency domain
-                channel_gft = np.abs(np.dot(channel_signal, eigenvecs))
-                gft_coeffs.append(channel_gft)
+            # Compute GFT coefficients
+            # GFT is defined as the projection of the signal onto eigenvectors
+            gft_coeffs = np.abs(np.dot(signal, eigenvecs))
             
-            # Combine GFT coefficients from all channels
-            combined_gft = np.concatenate(gft_coeffs)
-            
-            # Take first k coefficients as features (k=20 as specified in paper)
-            k = min(20, len(combined_gft))
-            return combined_gft[:k].astype(float)
-
+            # Return a fixed-length vector by zero-padding or truncating
+            target_length = 20  # As specified in the paper
+            if len(gft_coeffs) < target_length:
+                return np.pad(gft_coeffs, (0, target_length - len(gft_coeffs)))
+            else:
+                return gft_coeffs[:target_length]
+                
         except Exception as e:
             self.logger.error(f"Error computing GFT features: {str(e)}")
-            return np.zeros(20)  # Default size for GFT features
+            return np.zeros(20)  # Return zeros if computation fails
 
     def _get_default_local_features(self, G):
-        """Return default values for local features."""
+        """Return default values for local features when extraction fails."""
+        n_nodes = len(G.nodes())
         return {
             'local_efficiency': 0.0,
             'clustering_coefficient': {node: 0.0 for node in G.nodes()},
@@ -208,7 +206,7 @@ class FeatureExtractor:
         }
 
     def _get_default_global_features(self):
-        """Return default values for global features."""
+        """Return default values for global features when extraction fails."""
         return {
             'char_path_length': float('inf'),
             'global_efficiency': 0.0,
@@ -220,142 +218,14 @@ class FeatureExtractor:
         }
 
     def _get_default_spectral_features(self):
-        """Return default values for spectral features."""
+        """Return default values for spectral features when extraction fails."""
         return {
             'spectral_radius': 0.0,
             'energy': 0.0,
             'spectral_gap': 0.0,
             'normalized_laplacian_energy': 0.0,
+            'gft_coefficients': np.zeros(20),
             'spectral_power': 0.0,
             'spectral_entropy': 0.0,
-            'spectral_amplitude': 0.0,
-            'gft_coefficients': np.zeros(20)
+            'spectral_amplitude': 0.0
         }
-
-    def create_feature_matrix(self, graphs, labels=None):
-        """Create a labeled feature matrix from graph features.
-
-        Args:
-            graphs: List of networkx graphs with extracted features
-            labels: Optional array of labels (0 for benign, 1 for melanoma)
-
-        Returns:
-            pandas DataFrame with labeled features and diagnosis
-        """
-        try:
-            feature_vectors = []
-            feature_names = []
-
-            # Process first graph to get feature names
-            if graphs:
-                first_graph = graphs[0]
-                graph_features = first_graph.graph['features']
-                conventional_features = first_graph.graph.get('conventional_features', {})
-
-                # Local feature names with statistics
-                local_features = ['clustering_coefficient', 'nodal_strength', 
-                                'betweenness_centrality', 'closeness_centrality']
-                stats = ['mean', 'std', 'min', 'max']
-
-                for feat in local_features:
-                    for stat in stats:
-                        feature_names.append(f"{feat}_{stat}")
-
-                # Global feature names
-                global_features = ['local_efficiency', 'char_path_length', 
-                                 'global_efficiency', 'global_clustering',
-                                 'density', 'assortativity', 'transitivity',
-                                 'rich_club_coefficient']
-                feature_names.extend(global_features)
-
-                # Spectral feature names
-                spectral_features = ['spectral_radius', 'energy', 'spectral_gap',
-                                   'normalized_laplacian_energy', 'spectral_power',
-                                   'spectral_entropy', 'spectral_amplitude']
-                feature_names.extend(spectral_features)
-
-                # GFT coefficient names
-                n_gft = len(graph_features['gft_coefficients'])
-                gft_names = [f'gft_coef_{i+1}' for i in range(n_gft)]
-                feature_names.extend(gft_names)
-                
-                # Add conventional feature names if present
-                conv_feature_names = []
-                if conventional_features:
-                    conv_feature_names = sorted(conventional_features.keys())
-                    feature_names.extend(conv_feature_names)
-
-            # Extract features from all graphs
-            for G in graphs:
-                graph_features = G.graph['features']
-                conventional_features = G.graph.get('conventional_features', {})
-                feature_vector = []
-
-                # Add local features with statistics
-                for feat in local_features:
-                    values = np.array(list(graph_features[feat].values()))
-                    feature_vector.extend([
-                        np.mean(values),
-                        np.std(values),
-                        np.min(values),
-                        np.max(values)
-                    ])
-
-                # Add global features
-                for feat in global_features:
-                    feature_vector.append(graph_features.get(feat, 0.0))
-
-                # Add spectral features
-                for feat in spectral_features:
-                    feature_vector.append(graph_features.get(feat, 0.0))
-
-                # Add GFT coefficients
-                feature_vector.extend(graph_features['gft_coefficients'])
-                
-                # Add conventional features if present
-                if conventional_features:
-                    for name in conv_feature_names:
-                        value = conventional_features.get(name, 0.0)
-                        # Handle Hu moments which are lists
-                        if isinstance(value, list):
-                            feature_vector.extend(value)
-                            # Update feature names to reflect multiple values from lists
-                            if G == first_graph:  # Only update on first graph
-                                # Remove the original list feature name
-                                if name in feature_names:
-                                    feature_names.remove(name)
-                                # Add individual element names
-                                for i in range(len(value)):
-                                    feature_names.append(f"{name}_{i}")
-                        else:
-                            feature_vector.append(value)
-
-                feature_vectors.append(feature_vector)
-
-            # Create DataFrame
-            # Adjust feature names to match feature vector length
-            if feature_vectors:
-                if len(feature_names) != len(feature_vectors[0]):
-                    # Adjust feature names to match vector length
-                    if len(feature_names) < len(feature_vectors[0]):
-                        # Add generic names for missing columns
-                        for i in range(len(feature_names), len(feature_vectors[0])):
-                            feature_names.append(f"feature_{i}")
-                    else:
-                        # Truncate feature names if too many
-                        feature_names = feature_names[:len(feature_vectors[0])]
-                
-                df = pd.DataFrame(feature_vectors, columns=feature_names)
-            else:
-                df = pd.DataFrame()
-
-            # Add diagnosis column if labels are provided
-            if labels is not None:
-                df['diagnosis'] = ['melanoma' if label == 1 else 'benign' 
-                                 for label in labels]
-
-            return df
-
-        except Exception as e:
-            self.logger.error(f"Error creating feature matrix: {str(e)}")
-            raise RuntimeError(f"Error creating feature matrix: {str(e)}")
