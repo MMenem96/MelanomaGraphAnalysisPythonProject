@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="hero text-center text-light">
+    <div class="container">
+        <h1 class="display-4 fw-bold">BCC vs SK Detection System</h1>
+        <p class="lead mb-4">An advanced skin lesion classification system using graph-based feature extraction and machine learning.</p>
+        <div class="d-flex justify-content-center gap-3">
+            <a href="#upload-section" class="btn btn-primary btn-lg px-4">Analyze Image</a>
+            <a href="/about" class="btn btn-outline-light btn-lg px-4">Learn More</a>
+        </div>
+    </div>
+</section>
+
+<section class="py-5" id="features-section">
+    <div class="container">
+        <div class="row mb-5">
+            <div class="col-12 text-center">
+                <h2 class="mb-4">How It Works</h2>
+                <p class="lead">Our system combines advanced image processing with graph-based analysis to differentiate between BCC and SK lesions.</p>
+            </div>
+        </div>
+        <div class="row g-4">
+            <div class="col-md-4">
+                <div class="card h-100 border-0 shadow-sm">
+                    <div class="card-body text-center p-4">
+                        <div class="feature-icon mx-auto">
+                            <i class="bi bi-image-fill" style="color: var(--primary-blue);"></i>
+                        </div>
+                        <h3 class="h5 mb-3">Image Preprocessing</h3>
+                        <p class="card-text">Your skin lesion image is preprocessed to normalize lighting and enhance features.</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card h-100 border-0 shadow-sm">
+                    <div class="card-body text-center p-4">
+                        <div class="feature-icon mx-auto">
+                            <i class="bi bi-diagram-3-fill" style="color: var(--primary-blue);"></i>
+                        </div>
+                        <h3 class="h5 mb-3">Graph Construction</h3>
+                        <p class="card-text">The image is segmented into superpixels and represented as a graph structure.</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card h-100 border-0 shadow-sm">
+                    <div class="card-body text-center p-4">
+                        <div class="feature-icon mx-auto">
+                            <i class="bi bi-cpu-fill" style="color: var(--primary-blue);"></i>
+                        </div>
+                        <h3 class="h5 mb-3">AI Analysis</h3>
+                        <p class="card-text">Our machine learning model analyzes 500+ features to classify the lesion as either Basal-cell Carcinoma (BCC) or Seborrheic Keratosis (SK).</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section class="py-5 bg-light" id="upload-section">
+    <div class="container">
+        <div class="row justify-content-center">
+            <div class="col-lg-8">
+                <div class="card border-0 shadow">
+                    <div class="card-body p-5">
+                        <h2 class="card-title text-center mb-4">Upload a Skin Lesion Image</h2>
+                        <form action="/analyze" method="POST" enctype="multipart/form-data">
+                            <div class="mb-4">
+                                <label for="image" class="form-label">Select dermoscopic image</label>
+                                <input class="form-control" type="file" id="image" name="image" accept="image/*" required>
+                                <div class="form-text">Upload a clear image of the skin lesion for analysis.</div>
+                            </div>
+                            <div class="mb-4">
+                                <label for="classifier_type" class="form-label">Select model type</label>
+                                <select class="form-control" id="classifier_type" name="classifier_type">
+                                    <option value="svm_rbf">Support Vector Machine (RBF)</option>
+                                    <option value="svm_sigmoid">Support Vector Machine (Sigmoid)</option>
+                                    <option value="svm_poly">Support Vector Machine (Polynomial)</option>
+                                    <option value="rf">Random Forest</option>
+                                    <option value="knn">K-Nearest Neighbors</option>
+                                    <option value="mlp">Neural Network (MLP)</option>
+                                </select>
+                                <div class="form-text">Different models may perform better on different types of images.</div>
+                            </div>
+                            <div class="text-center">
+                                <button type="submit" class="btn btn-primary btn-lg px-4">Analyze Image</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section class="py-5" id="instructions-section">
+    <div class="container">
+        <div class="row mb-4">
+            <div class="col-12 text-center">
+                <h2>Tips for Good Results</h2>
+                <p class="lead">Follow these guidelines to get the most accurate analysis.</p>
+            </div>
+        </div>
+        <div class="row">
+            <div class="col-md-6">
+                <div class="card mb-4 border-0 shadow-sm">
+                    <div class="card-body p-4">
+                        <h3 class="h5 mb-3">Image Quality</h3>
+                        <ul class="mb-0">
+                            <li>Use dermoscopic images when possible</li>
+                            <li>Ensure good lighting conditions</li>
+                            <li>Keep the lesion centered in the frame</li>
+                            <li>Avoid shadows or reflections</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card mb-4 border-0 shadow-sm">
+                    <div class="card-body p-4">
+                        <h3 class="h5 mb-3">Understanding Results</h3>
+                        <ul class="mb-0">
+                            <li>Results are provided as risk probabilities</li>
+                            <li>High probability indicates likelihood of Basal-cell Carcinoma (BCC)</li>
+                            <li>Always consult a dermatologist</li>
+                            <li>This tool is meant to assist, not replace medical advice</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock %}

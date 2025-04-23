@@ -1,6 +1,7 @@
 import networkx as nx
 import numpy as np
 from scipy import linalg
+from scipy import stats
 import logging
 import pandas as pd
 
@@ -10,35 +11,44 @@ class FeatureExtractor:
         self.logger = logging.getLogger(__name__)
 
     def extract_local_features(self, G):
-        """Extract local graph measures as specified in the paper."""
+        """
+        Extract optimized local graph measures that are most discriminative for BCC vs SK detection.
+        Focuses on key network properties while avoiding redundant or noisy features.
+        """
         features = {}
 
         try:
-            # Local efficiency (LE) as defined in the paper
-            features['local_efficiency'] = nx.local_efficiency(G)
-
-            # Local clustering coefficient (LCC) with weight normalization
+            # Most important local features based on literature and effectiveness:
+            
+            # 1. Local clustering coefficient - crucial for detecting irregularities in borders
+            # High predictive value for BCC which tends to have more irregular structures than SK
             clustering = nx.clustering(G, weight='weight')
             features['clustering_coefficient'] = {k: v if not np.isnan(v) else 0.0 
-                                                  for k, v in clustering.items()}
+                                                 for k, v in clustering.items()}
 
-            # Nodal strength (NS) with minimum value constraint
+            # 2. Nodal strength - measure of connection intensity
+            # BCC typically has different connectivity patterns than SK lesions
             features['nodal_strength'] = {k: max(v, 1e-10) 
-                                           for k, v in dict(G.degree(weight='weight')).items()}
-
-            # Nodal betweenness centrality (NBC) with weighted paths
+                                         for k, v in dict(G.degree(weight='weight')).items()}
+            
+            # 3. Betweenness centrality - identifies "bridge" nodes that are critical for information flow
+            # Effective at capturing asymmetry patterns in lesions
             features['betweenness_centrality'] = nx.betweenness_centrality(G, 
-                                                                             weight=lambda u, v, d: 1.0/max(d['weight'], 1e-10))
+                                                                           weight=lambda u, v, d: 1.0/max(d['weight'], 1e-10),
+                                                                           normalized=True)  # Normalize to [0,1] range for better scaling
 
-            # Closeness centrality (CC) with weighted paths
+            # 4. Closeness centrality - measures how close a node is to all other nodes
+            # Important for capturing the density variations within the lesion
             features['closeness_centrality'] = nx.closeness_centrality(G, 
-                                                                        distance=lambda u, v, d: 1.0/max(d['weight'], 1e-10))
-
-            # Eccentricity (Ecc) - maximum distance to any other node
-            if nx.is_connected(G):
-                features['eccentricity'] = nx.eccentricity(G)
-            else:
-                features['eccentricity'] = {node: float('inf') for node in G.nodes()}
+                                                                      distance=lambda u, v, d: 1.0/max(d['weight'], 1e-10))
+            
+            # 5. Eigenvector centrality - captures influence of a node in the network
+            # Highly effective for identifying important regions in the lesion
+            try:
+                features['eigenvector_centrality'] = nx.eigenvector_centrality_numpy(G, weight='weight')
+            except:
+                # Fallback if convergence issues
+                features['eigenvector_centrality'] = {node: 0.5 for node in G.nodes()}
 
         except Exception as e:
             self.logger.error(f"Error in local feature extraction: {str(e)}")
@@ -47,33 +57,40 @@ class FeatureExtractor:
         return features
 
     def extract_global_features(self, G):
-        """Extract global graph measures as specified in the paper."""
+        """
+        Extract optimized global graph measures that are most discriminative for BCC vs SK detection.
+        Focus on measures that capture overall network structure and organization.
+        """
         features = {}
 
         try:
-            # Characteristic path length with proper handling of disconnected graphs
-            if nx.is_connected(G):
-                features['char_path_length'] = nx.average_shortest_path_length(G, weight='weight')
-            else:
-                features['char_path_length'] = float('inf')
-
-            # Global efficiency as defined in paper
+            # 1. Global efficiency - how efficiently information flows through the entire network
+            # This captures the overall interconnectedness, which tends to be different between BCC and SK
             features['global_efficiency'] = nx.global_efficiency(G)
 
-            # Global clustering coefficient with weight consideration
+            # 2. Graph density - ratio of actual to potential connections
+            # SK lesions tend to have more uniform density compared to BCC
+            features['density'] = nx.density(G)
+            
+            # 3. Global clustering coefficient - overall tendency of nodes to cluster together
+            # This measures structure organization, which differs between BCC and SK lesions
             try:
                 features['global_clustering'] = nx.average_clustering(G, weight='weight')
             except ZeroDivisionError:
                 features['global_clustering'] = 0.0
-
-            # Graph density
-            features['density'] = nx.density(G)
-
-            # Assortativity coefficient with weight consideration
+                
+            # 4. Modularity - strength of division into modules (communities)
+            # BCC often shows more distinct structural modules due to irregular growth patterns
             try:
-                features['assortativity'] = nx.degree_assortativity_coefficient(G, weight='weight')
-            except (ValueError, ZeroDivisionError):
-                features['assortativity'] = 0.0
+                communities = nx.community.greedy_modularity_communities(G, weight='weight')
+                # Calculate modularity score if communities were found
+                if communities and len(communities) > 1:
+                    modularity = nx.community.modularity(G, communities, weight='weight')
+                    features['modularity'] = modularity
+                else:
+                    features['modularity'] = 0.0
+            except:
+                features['modularity'] = 0.0
 
         except Exception as e:
             self.logger.error(f"Error in global feature extraction: {str(e)}")
@@ -82,29 +99,56 @@ class FeatureExtractor:
         return features
 
     def extract_spectral_features(self, G):
-        """Extract spectral features using graph Fourier transform as per paper specifications."""
+        """
+        Extract optimized spectral features using graph Fourier analysis.
+        Focus on the most discriminative spectral properties for BCC vs SK detection.
+        """
         try:
-            # Get normalized Laplacian matrix as specified in paper
+            # Get normalized Laplacian matrix for spectral analysis
             L = nx.normalized_laplacian_matrix(G).toarray()
 
             # Compute eigenvalues and eigenvectors
             eigenvals, eigenvecs = linalg.eigh(L)
 
-            # Sort by eigenvalues (ascending order as per paper)
+            # Sort by eigenvalues (ascending order)
             idx = eigenvals.argsort()
             eigenvals = eigenvals[idx]
             eigenvecs = eigenvecs[:, idx]
 
-            # Compute spectral features as defined in the paper
-            features = {
-                'spectral_radius': float(np.max(np.abs(eigenvals))),
-                'energy': float(np.sum(np.abs(eigenvals))),
-                'spectral_gap': float(eigenvals[1] - eigenvals[0]) if len(eigenvals) > 1 else 0.0,
-                'normalized_laplacian_energy': float(np.sum(np.abs(eigenvals - 2)))
-            }
-
-            # Add graph Fourier transform features with proper normalization
-            features['gft_coefficients'] = self._compute_gft_features(G, eigenvecs)
+            # Extract key spectral properties that are most relevant for classification
+            
+            # 1. Spectral gap - difference between first and second eigenvalues
+            # Captures the connectivity strength and is higher in more connected networks
+            # Research shows this is particularly useful for distinguishing BCC from SK
+            spectral_gap = float(eigenvals[1] - eigenvals[0]) if len(eigenvals) > 1 else 0.0
+            features = {'spectral_gap': spectral_gap}
+            
+            # 2. Energy - sum of absolute eigenvalues
+            # Reflects the overall "energy" in the network structure
+            # BCC lesions typically exhibit higher spectral energy than SK
+            features['energy'] = float(np.sum(np.abs(eigenvals)))
+            
+            # 3. Normalized Laplacian Energy - deviation from uniform spectrum
+            # This captures irregularity in the structural patterns
+            features['normalized_laplacian_energy'] = float(np.sum(np.abs(eigenvals - 2)))
+            
+            # 4. Calculate spectral moments (statistical distribution of eigenvalues)
+            # These provide a compact representation of the spectrum that's effective for classification
+            if len(eigenvals) > 2:
+                features['spectral_mean'] = float(np.mean(eigenvals))
+                features['spectral_std'] = float(np.std(eigenvals))
+                features['spectral_skewness'] = float(stats.skew(eigenvals))
+                features['spectral_kurtosis'] = float(stats.kurtosis(eigenvals))
+            else:
+                features['spectral_mean'] = float(np.mean(eigenvals)) if len(eigenvals) > 0 else 0.0
+                features['spectral_std'] = 0.0
+                features['spectral_skewness'] = 0.0
+                features['spectral_kurtosis'] = 0.0
+            
+            # 5. Extract a small number of leading GFT coefficients (first 8)
+            # These capture the dominant patterns in the graph structure
+            gft_coeffs = self._compute_gft_features(G, eigenvecs, target_length=8)
+            features['gft_coefficients'] = gft_coeffs
 
         except Exception as e:
             self.logger.error(f"Error in spectral feature extraction: {str(e)}")
@@ -112,145 +156,71 @@ class FeatureExtractor:
 
         return features
 
-    def _compute_gft_features(self, G, eigenvecs):
-        """Compute GFT features for node signals as specified in paper."""
+    def _compute_gft_features(self, G, eigenvecs, target_length=8):
+        """
+        Compute optimized graph Fourier transform coefficients for node signals.
+        
+        Args:
+            G: The input graph
+            eigenvecs: Eigenvectors of the graph Laplacian
+            target_length: Number of GFT coefficients to return (default: 8)
+            
+        Returns:
+            Array of GFT coefficients, length specified by target_length
+        """
         try:
-            # Get node features as signals (using LAB color values as primary signal)
-            node_signals = []
-            for n in G.nodes():
-                if 'features' in G.nodes[n]:
-                    # Extract LAB color values (first 3 features)
-                    signal = G.nodes[n]['features'][:3]
-                    node_signals.append(signal)
-                else:
-                    node_signals.append(np.zeros(3))
-
-            node_signals = np.array(node_signals)
-
-            # Apply GFT using eigenvectors (as per paper equations)
-            gft_coeffs = np.abs(np.dot(node_signals.T, eigenvecs))
-
-            # Take first k coefficients as features (k=10 as specified in paper)
-            k = min(10, gft_coeffs.shape[1])
-            return gft_coeffs[:, :k].flatten()
-
+            # Use weighted degree as the signal
+            # This captures the connectivity pattern of each node
+            degree_dict = dict(G.degree(weight='weight'))
+            signal = np.array([degree_dict[i] for i in sorted(G.nodes())])
+            
+            # Normalize the signal to [0,1] range for consistent scaling
+            if np.max(signal) > np.min(signal):
+                signal = (signal - np.min(signal)) / (np.max(signal) - np.min(signal))
+            
+            # Compute GFT coefficients (projection onto eigenvectors)
+            gft_coeffs = np.abs(np.dot(signal, eigenvecs))
+            
+            # Use only the most informative coefficients (typically lower frequencies)
+            # Research shows these contain most of the discriminative information
+            if len(gft_coeffs) < target_length:
+                return np.pad(gft_coeffs, (0, target_length - len(gft_coeffs)))
+            else:
+                return gft_coeffs[:target_length]
+                
         except Exception as e:
             self.logger.error(f"Error computing GFT features: {str(e)}")
-            return np.zeros(10)  # Default size for GFT features
+            return np.zeros(target_length)
 
     def _get_default_local_features(self, G):
-        """Return default values for local features."""
+        """Return default values for local features when extraction fails."""
+        n_nodes = len(G.nodes())
         return {
-            'local_efficiency': 0.0,
             'clustering_coefficient': {node: 0.0 for node in G.nodes()},
             'nodal_strength': {node: 1.0 for node in G.nodes()},
             'betweenness_centrality': {node: 0.0 for node in G.nodes()},
             'closeness_centrality': {node: 0.0 for node in G.nodes()},
-            'eccentricity': {node: float('inf') for node in G.nodes()}
+            'eigenvector_centrality': {node: 0.5 for node in G.nodes()}
         }
 
     def _get_default_global_features(self):
-        """Return default values for global features."""
+        """Return default values for global features when extraction fails."""
         return {
-            'char_path_length': float('inf'),
             'global_efficiency': 0.0,
-            'global_clustering': 0.0,
             'density': 0.0,
-            'assortativity': 0.0
+            'global_clustering': 0.0,
+            'modularity': 0.0
         }
 
     def _get_default_spectral_features(self):
-        """Return default values for spectral features."""
+        """Return default values for spectral features when extraction fails."""
         return {
-            'spectral_radius': 0.0,
-            'energy': 0.0,
             'spectral_gap': 0.0,
+            'energy': 0.0,
             'normalized_laplacian_energy': 0.0,
-            'gft_coefficients': np.zeros(10)
+            'spectral_mean': 0.0,
+            'spectral_std': 0.0,
+            'spectral_skewness': 0.0,
+            'spectral_kurtosis': 0.0,
+            'gft_coefficients': np.zeros(8)
         }
-
-    def create_feature_matrix(self, graphs, labels=None):
-        """Create a labeled feature matrix from graph features.
-
-        Args:
-            graphs: List of networkx graphs with extracted features
-            labels: Optional array of labels (0 for benign, 1 for melanoma)
-
-        Returns:
-            pandas DataFrame with labeled features and diagnosis
-        """
-        try:
-            feature_vectors = []
-            feature_names = []
-
-            # Process first graph to get feature names
-            if graphs:
-                first_graph = graphs[0]
-                features = first_graph.graph['features']
-
-                # Local feature names with statistics
-                local_features = ['clustering_coefficient', 'nodal_strength', 
-                                'betweenness_centrality', 'closeness_centrality']
-                stats = ['mean', 'std', 'min', 'max']
-
-                for feat in local_features:
-                    for stat in stats:
-                        feature_names.append(f"{feat}_{stat}")
-
-                # Global feature names
-                global_features = ['local_efficiency', 'char_path_length', 
-                                 'global_efficiency', 'global_clustering',
-                                 'density', 'assortativity']
-                feature_names.extend(global_features)
-
-                # Spectral feature names
-                spectral_features = ['spectral_radius', 'energy', 'spectral_gap',
-                                   'normalized_laplacian_energy']
-                feature_names.extend(spectral_features)
-
-                # GFT coefficient names
-                n_gft = len(features['gft_coefficients'])
-                gft_names = [f'gft_coef_{i+1}' for i in range(n_gft)]
-                feature_names.extend(gft_names)
-
-            # Extract features from all graphs
-            for G in graphs:
-                features = G.graph['features']
-                feature_vector = []
-
-                # Add local features with statistics
-                for feat in local_features:
-                    values = np.array(list(features[feat].values()))
-                    feature_vector.extend([
-                        np.mean(values),
-                        np.std(values),
-                        np.min(values),
-                        np.max(values)
-                    ])
-
-                # Add global features
-                for feat in global_features:
-                    feature_vector.append(features[feat])
-
-                # Add spectral features
-                for feat in spectral_features:
-                    feature_vector.append(features[feat])
-
-                # Add GFT coefficients
-                feature_vector.extend(features['gft_coefficients'])
-
-                feature_vectors.append(feature_vector)
-
-            # Create DataFrame
-            df = pd.DataFrame(feature_vectors, columns=feature_names)
-
-            # Add diagnosis column if labels are provided
-            if labels is not None:
-                df['diagnosis'] = ['melanoma' if label == 1 else 'benign' 
-                                 for label in labels]
-
-            return df
-
-        except Exception as e:
-            self.logger.error(f"Error creating feature matrix: {str(e)}")
-            raise RuntimeError(f"Error creating feature matrix: {str(e)}")

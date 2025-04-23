@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BCC vs SK Detection System</title>
+    <link href="https://cdn.replit.com/agent/bootstrap-agent-dark-theme.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    <style>
+        .hero {
+            padding: 5rem 0;
+            background-color: var(--bs-dark);
+        }
+        .result-card {
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        .result-card img {
+            max-width: 100%;
+            height: auto;
+        }
+        .high-risk {
+            color: var(--bs-danger);
+            font-weight: bold;
+        }
+        .low-risk {
+            color: var(--bs-success);
+            font-weight: bold;
+        }
+        .confidence-bar {
+            height: 24px;
+            border-radius: 12px;
+        }
+        .feature-icon {
+            width: 4rem;
+            height: 4rem;
+            border-radius: 0.75rem;
+            background-color: var(--bs-primary-bg-subtle);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 1rem;
+        }
+        .feature-icon i {
+            font-size: 2rem;
+            color: var(--bs-primary);
+        }
+        
+        /* Additional color variables for consistency */
+        :root {
+            --bcc-red: #dc3545;
+            --sk-green: #198754;
+            --primary-blue: #0d6efd;
+            --dark-bg: #212529;
+            --light-bg: #f8f9fa;
+        }
+    </style>
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+        <div class="container">
+            <a class="navbar-brand" href="/">BCC vs SK Detection</a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav me-auto">
+                    <li class="nav-item">
+                        <a class="nav-link" href="/">Home</a>
+                    </li>
+                    <!-- Train Model option removed - only available via CLI -->
+                    <!-- History option removed -->
+                    <li class="nav-item">
+                        <a class="nav-link" href="/about">About</a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Flash Messages -->
+    <div class="container mt-3">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+    </div>
+
+    <!-- Main Content -->
+    {% block content %}{% endblock %}
+
+    <!-- Footer -->
+    <footer class="py-5 bg-dark text-light mt-5">
+        <div class="container">
+            <div class="row">
+                <div class="col-md-6">
+                    <h5>BCC vs SK Detection System</h5>
+                    <p>Advanced skin lesion analysis based on graph theoretical features and supervised machine learning.</p>
+                </div>
+                <div class="col-md-3">
+                    <h5>Links</h5>
+                    <ul class="list-unstyled">
+                        <li><a href="/" class="text-decoration-none text-light">Home</a></li>
+                        <!-- Train Model link removed -->
+                        <!-- History link removed -->
+                        <li><a href="/about" class="text-decoration-none text-light">About</a></li>
+                    </ul>
+                </div>
+                <div class="col-md-3">
+                    <h5>Research</h5>
+                    <p>Based on the paper: "Melanoma Detection Using Spatial and Spectral Analysis on Superpixel Graphs" by Mahmoud H Annaby, Asmaa M Elwer, Muhammad A Rushdi, Mohamed E M Rasmy.</p>
+                </div>
+            </div>
+            <div class="row mt-3">
+                <div class="col-12 text-center">
+                    <p class="mb-0">© 2025 BCC vs SK Detection System</p>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
