@@ -1,7 +1,7 @@
 Melanoma Detection Model Training Summary
 =========================================
 
-Training completed on: 2025-04-23 18:29:22
+Training completed on: 2025-04-23 19:40:59
 
 Results by classifier:
 --------------------------------------------------------------------------------
@@ -12,8 +12,8 @@ Performance Metrics:
 
 Feature Information:
   Total Features: 303
-  Selected Features: 147
-  Feature Reduction: 51.49%
+  Selected Features: 60
+  Feature Reduction: 80.20%
 
 
 Classifier: SVM (Sigmoid)
@@ -22,8 +22,8 @@ Performance Metrics:
 
 Feature Information:
   Total Features: 303
-  Selected Features: 148
-  Feature Reduction: 51.16%
+  Selected Features: 60
+  Feature Reduction: 80.20%
 
 
 Classifier: SVM (Poly)
@@ -32,8 +32,18 @@ Performance Metrics:
 
 Feature Information:
   Total Features: 303
-  Selected Features: 149
-  Feature Reduction: 50.83%
+  Selected Features: 60
+  Feature Reduction: 80.20%
+
+
+Classifier: RF
+-------------
+Performance Metrics:
+
+Feature Information:
+  Total Features: 303
+  Selected Features: 60
+  Feature Reduction: 80.20%
 
 
 Classifier: MLP
@@ -42,8 +52,8 @@ Performance Metrics:
 
 Feature Information:
   Total Features: 303
-  Selected Features: 148
-  Feature Reduction: 51.16%
+  Selected Features: 60
+  Feature Reduction: 80.20%
 
 
 Classifier: KNN
@@ -52,16 +62,17 @@ Performance Metrics:
 
 Feature Information:
   Total Features: 303
-  Selected Features: 147
-  Feature Reduction: 51.49%
+  Selected Features: 60
+  Feature Reduction: 80.20%
 
 
 Summary Table:
 --------------------------------------------------------------------------------
                Accuracy (%)  AUC ROC (%)  AUC PR (%)  Sensitivity (%)  Specificity (%)  Precision (%)  F1 Score (%)  Total Features  Selected Features  Feature Reduction (%)
-SVM (RBF)             50.00        50.00       75.00           100.00             0.00          50.00         66.67          303.00             147.00                  51.49
-SVM (Sigmoid)         75.00       100.00      100.00           100.00            50.00          66.67         80.00          303.00             148.00                  51.16
-SVM (Poly)            50.00        50.00       75.00             0.00           100.00           0.00          0.00          303.00             149.00                  50.83
-MLP                   50.00        50.00       70.83            50.00            50.00          50.00         50.00          303.00             148.00                  51.16
-KNN                   50.00        50.00       75.00           100.00             0.00          50.00         66.67          303.00             147.00                  51.49
+SVM (RBF)             78.88        86.88       83.37            88.86            69.57          73.13         80.23          303.00              60.00                  80.20
+SVM (Sigmoid)         74.75        82.37       78.70            90.93            59.66          67.76         77.65          303.00              60.00                  80.20
+SVM (Poly)            80.25        87.32       84.30            90.67            70.53          74.15         81.59          303.00              60.00                  80.20
+RF                    79.75        88.55       84.57            89.64            70.53          73.93         81.03          303.00              60.00                  80.20
+MLP                   78.25        86.81       83.79            86.79            70.29          73.14         79.38          303.00              60.00                  80.20
+KNN                   76.62        84.10       79.96            89.64            64.49          70.18         78.73          303.00              60.00                  80.20
 

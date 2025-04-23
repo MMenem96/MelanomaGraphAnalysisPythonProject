@@ -2,21 +2,21 @@ Training Summary for SVM (Sigmoid)
 ==================================
 
 Performance Metrics:
-  Accuracy: 75.00%
-  AUC: 100.00%
-  Sensitivity/Recall: 100.00%
-  Specificity: 50.00%
-  Precision: 66.67%
-  F1 Score: 80.00%
-  PR-AUC: 100.00%
+  Accuracy: 74.75%
+  AUC: 82.37%
+  Sensitivity/Recall: 90.93%
+  Specificity: 59.66%
+  Precision: 67.76%
+  F1 Score: 77.65%
+  PR-AUC: 78.70%
 
 Feature Information:
   Total features: 303
-  Selected features: 148
-  Feature reduction: 51.16%
+  Selected features: 60
+  Feature reduction: 80.20%
 
 Confusion Matrix:
-  [[1 1]
-   [0 2]]
+  [[247 167]
+   [35 351]]
 
-Training completed on: 2025-04-23 18:29:19
+Training completed on: 2025-04-23 19:37:54

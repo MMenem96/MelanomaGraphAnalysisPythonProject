@@ -2,21 +2,21 @@ Training Summary for SVM (Poly)
 ==================================
 
 Performance Metrics:
-  Accuracy: 50.00%
-  AUC: 50.00%
-  Sensitivity/Recall: 0.00%
-  Specificity: 100.00%
-  Precision: 0.00%
-  F1 Score: 0.00%
-  PR-AUC: 75.00%
+  Accuracy: 80.25%
+  AUC: 87.32%
+  Sensitivity/Recall: 90.67%
+  Specificity: 70.53%
+  Precision: 74.15%
+  F1 Score: 81.59%
+  PR-AUC: 84.30%
 
 Feature Information:
   Total features: 303
-  Selected features: 149
-  Feature reduction: 50.83%
+  Selected features: 60
+  Feature reduction: 80.20%
 
 Confusion Matrix:
-  [[2 0]
-   [2 0]]
+  [[292 122]
+   [36 350]]
 
-Training completed on: 2025-04-23 18:29:19
+Training completed on: 2025-04-23 19:39:01

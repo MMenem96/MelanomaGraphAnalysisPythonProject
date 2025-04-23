@@ -2,21 +2,21 @@ Training Summary for KNN
 ==================================
 
 Performance Metrics:
-  Accuracy: 50.00%
-  AUC: 50.00%
-  Sensitivity/Recall: 100.00%
-  Specificity: 0.00%
-  Precision: 50.00%
-  F1 Score: 66.67%
-  PR-AUC: 75.00%
+  Accuracy: 76.62%
+  AUC: 84.10%
+  Sensitivity/Recall: 89.64%
+  Specificity: 64.49%
+  Precision: 70.18%
+  F1 Score: 78.73%
+  PR-AUC: 79.96%
 
 Feature Information:
   Total features: 303
-  Selected features: 147
-  Feature reduction: 51.49%
+  Selected features: 60
+  Feature reduction: 80.20%
 
 Confusion Matrix:
-  [[0 2]
-   [0 2]]
+  [[267 147]
+   [40 346]]
 
-Training completed on: 2025-04-23 18:29:22
+Training completed on: 2025-04-23 19:40:59
