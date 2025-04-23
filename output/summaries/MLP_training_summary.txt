@@ -1,0 +1,22 @@
+Training Summary for MLP
+==================================
+
+Performance Metrics:
+  Accuracy: 50.00%
+  AUC: 50.00%
+  Sensitivity/Recall: 50.00%
+  Specificity: 50.00%
+  Precision: 50.00%
+  F1 Score: 50.00%
+  PR-AUC: 70.83%
+
+Feature Information:
+  Total features: 303
+  Selected features: 148
+  Feature reduction: 51.16%
+
+Confusion Matrix:
+  [[1 1]
+   [1 1]]
+
+Training completed on: 2025-04-23 18:29:21

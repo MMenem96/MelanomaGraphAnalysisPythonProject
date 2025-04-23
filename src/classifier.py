@@ -12,30 +12,102 @@ from src.evaluation import ModelEvaluator  # Import ModelEvaluator
 
 class MelanomaClassifier:
     def __init__(self, classifier_type='svm'):
-        """Initialize the classifier with specified type."""
+        """
+        Initialize the classifier with optimized parameters for melanoma detection.
+        
+        Args:
+            classifier_type: Type of classifier to use ('svm_rbf', 'svm_sigmoid', 'svm_poly', 'rf', 'knn', 'mlp')
+        """
         self.logger = logging.getLogger(__name__)
         self.classifier_type = classifier_type
         self.scaler = StandardScaler()
-        # Always keep feature_selector as None to ensure we use all features
         self.feature_selector = None
-        self.logger.info("Initializing classifier without feature selection to ensure dimension consistency")
-        # Initialize classifier based on type with parameters from paper
-        if classifier_type == 'svm':
+        self.logger.info(f"Initializing optimized {classifier_type} classifier for melanoma detection")
+        
+        # Initialize classifier with optimized parameters for melanoma detection
+        if classifier_type == 'svm' or classifier_type == 'svm_rbf':
+            # RBF kernel is generally the most effective for complex, non-linear separations
+            # like those in melanoma detection
             self.classifier = SVC(
                 kernel='rbf',
-                C=10.0,  # Higher C value for better regularization as per paper
-                gamma='scale',  # Using scale for better generalization
+                C=1.0,                # More conservative C for better generalization
+                gamma='auto',         # Automatically determine gamma for better adaptability
+                probability=True,     # Required for ROC curve and probability estimates
+                random_state=42,
+                class_weight='balanced',  # Critical for handling class imbalance
+                cache_size=1000,      # Larger cache for faster computation
+                max_iter=10000        # Ensure convergence
+            )
+        elif classifier_type == 'svm_sigmoid':
+            # Sigmoid kernel can sometimes capture more complex relationships
+            self.classifier = SVC(
+                kernel='sigmoid',
+                C=1.0,
+                gamma='auto',
+                coef0=0.1,            # Sigmoid-specific parameter, optimized for skin imagery
                 probability=True,
                 random_state=42,
-                class_weight='balanced'  # Handle class imbalance
+                class_weight='balanced',
+                cache_size=1000,
+                max_iter=10000
+            )
+        elif classifier_type == 'svm_poly':
+            # Polynomial kernel can model more complex boundaries
+            self.classifier = SVC(
+                kernel='poly',
+                degree=3,             # Cubic polynomial usually works well for medical imaging
+                C=1.0,
+                gamma='auto',
+                coef0=0.1,
+                probability=True,
+                random_state=42,
+                class_weight='balanced',
+                cache_size=1000,
+                max_iter=10000
             )
         elif classifier_type == 'rf':
+            # Random Forests often perform well on high-dimensional medical image data
             self.classifier = RandomForestClassifier(
-                n_estimators=200,  # Increased number of trees as per paper
-                max_depth=None,  # Allow full depth for complex feature relationships
-                min_samples_split=2,
-                min_samples_leaf=1,
-                class_weight='balanced',  # Handle class imbalance
+                n_estimators=300,          # More trees for better ensemble learning
+                max_depth=None,            # No limit on depth for complex medical patterns
+                min_samples_split=5,       # More conservative to prevent overfitting 
+                min_samples_leaf=2,        # More conservative to prevent overfitting
+                max_features='sqrt',       # Standard practice for reducing overfitting
+                class_weight='balanced',   # Critical for imbalanced melanoma datasets
+                bootstrap=True,            # Enable bootstrapping for robust ensembles
+                oob_score=True,            # Use out-of-bag samples for validation
+                random_state=42,
+                n_jobs=-1                  # Use all available cores
+            )
+        elif classifier_type == 'knn':
+            from sklearn.neighbors import KNeighborsClassifier
+            # KNN works well for cases where local patterns matter
+            self.classifier = KNeighborsClassifier(
+                n_neighbors=7,             # Slightly higher to reduce noise influence
+                weights='distance',        # Weight by inverse of distance for better local focus
+                algorithm='auto',          # Let sklearn choose the most efficient algorithm
+                leaf_size=30,              # Default value
+                p=2,                       # Euclidean distance (L2 norm)
+                metric='minkowski',        # Standard distance metric
+                n_jobs=-1                  # Use all available cores
+            )
+        elif classifier_type == 'mlp':
+            from sklearn.neural_network import MLPClassifier
+            # Neural networks can capture complex, non-linear relationships in image data
+            self.classifier = MLPClassifier(
+                hidden_layer_sizes=(100, 50, 25),  # More complex architecture for medical imaging
+                activation='relu',                  # ReLU generally works well
+                solver='adam',                      # Adam optimizer for better convergence
+                alpha=0.001,                        # Slightly higher regularization to prevent overfitting
+                batch_size='auto',
+                learning_rate='adaptive',           # Adapt learning rate for faster convergence
+                learning_rate_init=0.001,           # Standard starting rate
+                max_iter=1000,                      # More iterations to ensure convergence
+                tol=1e-4,                           # Standard tolerance
+                early_stopping=True,                # Stop if validation score doesn't improve
+                validation_fraction=0.2,            # Use 20% for validation
+                beta_1=0.9, beta_2=0.999,           # Adam optimizer parameters
+                epsilon=1e-8,                       # Adam optimizer parameters
                 random_state=42
             )
         else:
@@ -55,29 +127,80 @@ class MelanomaClassifier:
                 # Extract all conventional features
                 conventional_features = G.graph.get('conventional_features', {})
                 
-                # Combine all graph-based features into a vector
-                graph_feature_vector = np.concatenate([
-                    self._get_statistical_features(graph_features['clustering_coefficient']),
-                    self._get_statistical_features(graph_features['nodal_strength']),
-                    self._get_statistical_features(graph_features['betweenness_centrality']),
-                    self._get_statistical_features(graph_features['closeness_centrality']),
-                    [graph_features.get('local_efficiency', 0.0)],
-                    [graph_features.get('char_path_length', float('inf')) if graph_features.get('char_path_length', float('inf')) != float('inf') else 0.0],
-                    [graph_features.get('global_efficiency', 0.0)],
-                    [graph_features.get('global_clustering', 0.0)],
-                    [graph_features.get('density', 0.0)],
-                    [graph_features.get('assortativity', 0.0)],
-                    [graph_features.get('transitivity', 0.0)],
-                    [graph_features.get('rich_club_coefficient', 0.0)],
-                    [graph_features.get('spectral_radius', 0.0)],
-                    [graph_features.get('energy', 0.0)],
-                    [graph_features.get('spectral_gap', 0.0)],
-                    [graph_features.get('normalized_laplacian_energy', 0.0)],
-                    [graph_features.get('spectral_power', 0.0)],
-                    [graph_features.get('spectral_entropy', 0.0)],
-                    [graph_features.get('spectral_amplitude', 0.0)],
-                    graph_features.get('gft_coefficients', np.zeros(20))  # GFT coefficients
+                # Extract local features aggregated with statistical measures
+                # Each local feature contributes 5 statistical metrics
+                local_feature_stats = []
+                
+                # 1. Clustering coefficient (crucial for detecting border irregularities)
+                if 'clustering_coefficient' in graph_features:
+                    local_feature_stats.append(self._get_statistical_features(graph_features['clustering_coefficient']))
+                
+                # 2. Nodal strength (connectivity pattern)
+                if 'nodal_strength' in graph_features:
+                    local_feature_stats.append(self._get_statistical_features(graph_features['nodal_strength']))
+                
+                # 3. Betweenness centrality (identifies bridge nodes)
+                if 'betweenness_centrality' in graph_features:
+                    local_feature_stats.append(self._get_statistical_features(graph_features['betweenness_centrality']))
+                
+                # 4. Closeness centrality (density variations)
+                if 'closeness_centrality' in graph_features:
+                    local_feature_stats.append(self._get_statistical_features(graph_features['closeness_centrality']))
+                
+                # 5. Eigenvector centrality (node importance)
+                if 'eigenvector_centrality' in graph_features:
+                    local_feature_stats.append(self._get_statistical_features(graph_features['eigenvector_centrality']))
+                
+                # If any local features exist, concatenate them
+                if local_feature_stats:
+                    local_features = np.concatenate(local_feature_stats)
+                else:
+                    # No local features found, use empty array
+                    local_features = np.array([])
+                
+                # Extract global features as scalars
+                global_features = np.array([
+                    # 1. Global efficiency (information flow metric)
+                    graph_features.get('global_efficiency', 0.0),
+                    # 2. Network density (connection density)
+                    graph_features.get('density', 0.0),
+                    # 3. Global clustering (organization structure)
+                    graph_features.get('global_clustering', 0.0),
+                    # 4. Modularity (community structure)
+                    graph_features.get('modularity', 0.0)
                 ])
+                
+                # Extract spectral features 
+                spectral_features = np.array([
+                    # 1. Spectral gap (network connectivity strength)
+                    graph_features.get('spectral_gap', 0.0),
+                    # 2. Energy (overall energy in network structure)
+                    graph_features.get('energy', 0.0),
+                    # 3. Normalized Laplacian Energy (structural irregularity)
+                    graph_features.get('normalized_laplacian_energy', 0.0),
+                    # 4. Spectral mean (average eigenvalue)
+                    graph_features.get('spectral_mean', 0.0),
+                    # 5. Spectral standard deviation (eigenvalue spread)
+                    graph_features.get('spectral_std', 0.0),
+                    # 6. Spectral skewness (eigenvalue distribution asymmetry)
+                    graph_features.get('spectral_skewness', 0.0),
+                    # 7. Spectral kurtosis (eigenvalue distribution peakedness)
+                    graph_features.get('spectral_kurtosis', 0.0)
+                ])
+                
+                # Extract GFT coefficients (now 8 coefficients instead of 20)
+                gft_coeffs = graph_features.get('gft_coefficients', np.zeros(8))
+                
+                # Combine all feature types into a single vector
+                feature_components = []
+                if len(local_features) > 0:
+                    feature_components.append(local_features)
+                feature_components.append(global_features)
+                feature_components.append(spectral_features)
+                feature_components.append(gft_coeffs)
+                
+                # Concatenate all features
+                graph_feature_vector = np.concatenate(feature_components)
                 
                 # Convert conventional features dictionary to vector
                 if conventional_features:
@@ -168,35 +291,120 @@ class MelanomaClassifier:
             return np.zeros(5)
 
     def select_features(self, X, y, method='mutual_info', n_features=100):
-        """Select the most relevant features."""
+        """
+        Select the most relevant features for classification using advanced techniques.
+        
+        Args:
+            X: Feature matrix
+            y: Target labels
+            method: Feature selection method ('mutual_info', 'f_classif', or 'combined')
+            n_features: Maximum number of features to select
+            
+        Returns:
+            X_selected: Matrix with selected features
+        """
         try:
+            # Ensure we're working with appropriate feature sizes
+            max_features = min(n_features, X.shape[1])
+            
+            # Default to at least 30% of features or 50, whichever is greater
+            min_features = max(int(X.shape[1] * 0.3), min(50, X.shape[1]))
+            k = max(min_features, max_features)
+            
+            # For small datasets, use a higher percentage of features
+            if X.shape[0] < 50:  # Less than 50 samples
+                k = min(int(X.shape[1] * 0.7), X.shape[1])
+                self.logger.info(f"Small dataset detected. Using {k} features.")
+            
             if method == 'mutual_info':
-                selector = SelectKBest(mutual_info_classif, k=min(n_features, X.shape[1]))
+                # Using mutual information for feature selection (best for detecting non-linear relationships)
+                selector = SelectKBest(mutual_info_classif, k=k)
             elif method == 'f_classif':
-                selector = SelectKBest(f_classif, k=min(n_features, X.shape[1]))
+                # Using ANOVA F-statistic for feature selection (best for linear relationships)
+                selector = SelectKBest(f_classif, k=k)
+            elif method == 'combined':
+                # Use both methods and take the union of their selected features
+                mi_selector = SelectKBest(mutual_info_classif, k=min(k//2 + 1, X.shape[1]))
+                f_selector = SelectKBest(f_classif, k=min(k//2 + 1, X.shape[1]))
+                
+                # Get indices of selected features from both methods
+                mi_selector.fit(X, y)
+                f_selector.fit(X, y)
+                mi_indices = np.where(mi_selector.get_support())[0]
+                f_indices = np.where(f_selector.get_support())[0]
+                
+                # Combine unique indices
+                combined_indices = np.union1d(mi_indices, f_indices)
+                
+                # Create custom selector that preserves the selected indices
+                selector = SelectKBest(mutual_info_classif, k='all')
+                selector.fit(X, y)
+                # Manually set the support mask
+                support = np.zeros(X.shape[1], dtype=bool)
+                support[combined_indices] = True
+                selector._support = support
+                selector._get_support_mask = lambda: support
+                
+                X_selected = X[:, combined_indices]
+                self.feature_selector = selector
+                
+                self.logger.info(f"Combined feature selection: {len(combined_indices)} features")
+                return X_selected
             else:
                 self.logger.warning(f"Unknown feature selection method: {method}, using mutual_info")
-                selector = SelectKBest(mutual_info_classif, k=min(n_features, X.shape[1]))
-                
+                selector = SelectKBest(mutual_info_classif, k=k)
+            
+            # Fit the selector and transform the data
             X_selected = selector.fit_transform(X, y)
             self.feature_selector = selector
             
-            self.logger.info(f"Selected {X_selected.shape[1]} features out of {X.shape[1]}")
+            # Log feature importance information for better understanding
+            if hasattr(selector, 'scores_') and selector.scores_ is not None:
+                # Get indices of selected features
+                selected_indices = np.where(selector.get_support())[0]
+                # Get scores of selected features
+                selected_scores = selector.scores_[selected_indices]
+                
+                # Log top 5 features and their scores
+                top_indices = np.argsort(selected_scores)[-5:][::-1]  # Descending order
+                top_features = selected_indices[top_indices]
+                top_scores = selected_scores[top_indices]
+                
+                feature_info = '\n'.join([f"Feature {idx}: Score {score:.4f}" 
+                                        for idx, score in zip(top_features, top_scores)])
+                self.logger.info(f"Top 5 selected features:\n{feature_info}")
             
+            self.logger.info(f"Selected {X_selected.shape[1]} features out of {X.shape[1]}")
             return X_selected
                 
         except Exception as e:
             self.logger.error(f"Error in feature selection: {str(e)}")
+            # Return original features if selection fails
             return X
 
     def optimize_hyperparameters(self, X, y, cv=5):
         """Perform hyperparameter optimization."""
         try:
-            if self.classifier_type == 'svm':
+            if self.classifier_type == 'svm' or self.classifier_type == 'svm_rbf':
                 param_grid = {
                     'C': [0.1, 1, 10, 100],
                     'gamma': ['scale', 'auto', 0.01, 0.1],
-                    'kernel': ['rbf', 'linear', 'poly']
+                    'kernel': ['rbf']
+                }
+            elif self.classifier_type == 'svm_sigmoid':
+                param_grid = {
+                    'C': [0.1, 1, 10, 100],
+                    'gamma': ['scale', 'auto', 0.01, 0.1],
+                    'kernel': ['sigmoid'],
+                    'coef0': [0.0, 0.1, 0.5]
+                }
+            elif self.classifier_type == 'svm_poly':
+                param_grid = {
+                    'C': [0.1, 1, 10, 100],
+                    'gamma': ['scale', 'auto', 0.01, 0.1],
+                    'kernel': ['poly'],
+                    'degree': [2, 3, 4],
+                    'coef0': [0.0, 0.1, 0.5]
                 }
             elif self.classifier_type == 'rf':
                 param_grid = {
@@ -204,6 +412,19 @@ class MelanomaClassifier:
                     'max_depth': [None, 10, 20, 30],
                     'min_samples_split': [2, 5, 10],
                     'min_samples_leaf': [1, 2, 4]
+                }
+            elif self.classifier_type == 'knn':
+                param_grid = {
+                    'n_neighbors': [3, 5, 7, 9],
+                    'weights': ['uniform', 'distance'],
+                    'p': [1, 2]  # 1=Manhattan, 2=Euclidean
+                }
+            elif self.classifier_type == 'mlp':
+                param_grid = {
+                    'hidden_layer_sizes': [(50,), (100,), (100, 50)],
+                    'activation': ['relu', 'tanh'],
+                    'alpha': [0.0001, 0.001, 0.01],
+                    'learning_rate': ['constant', 'adaptive']
                 }
             else:
                 self.logger.warning(f"No hyperparameter grid defined for {self.classifier_type}")
@@ -358,25 +579,52 @@ class MelanomaClassifier:
         try:
             os.makedirs(output_dir, exist_ok=True)
             
+            # Create classifier-specific directory
+            classifier_dir = self.classifier_type.upper()
+            
+            # Map internal classifier types to proper directory names for consistency
+            if self.classifier_type == 'svm':
+                classifier_dir = 'SVM_RBF'
+            elif self.classifier_type == 'svm_sigmoid':
+                classifier_dir = 'SVM_Sigmoid'
+            elif self.classifier_type == 'svm_poly':
+                classifier_dir = 'SVM_Poly'
+            elif self.classifier_type == 'rf':
+                classifier_dir = 'RF'
+            elif self.classifier_type == 'knn':
+                classifier_dir = 'KNN'
+            elif self.classifier_type == 'mlp':
+                classifier_dir = 'MLP'
+                
+            # Create classifier-specific directory
+            model_dir = os.path.join(output_dir, classifier_dir)
+            os.makedirs(model_dir, exist_ok=True)
+            
             # Save model
-            model_path = os.path.join(output_dir, 'melanoma_classifier.joblib')
+            model_path = os.path.join(model_dir, 'model.joblib')
             dump(self.classifier, model_path)
             
             # Save scaler
-            scaler_path = os.path.join(output_dir, 'scaler.joblib')
+            scaler_path = os.path.join(model_dir, 'scaler.joblib')
             dump(self.scaler, scaler_path)
             
             # Save feature selector if available
             if self.feature_selector is not None:
-                selector_path = os.path.join(output_dir, 'feature_selector.joblib')
+                selector_path = os.path.join(model_dir, 'feature_selector.joblib')
                 dump(self.feature_selector, selector_path)
             
             self.logger.info(f"Model saved to {model_path}")
             
+            # Also save a copy in the main model directory for backward compatibility
+            backup_model_path = os.path.join(output_dir, 'melanoma_classifier.joblib')
+            backup_scaler_path = os.path.join(output_dir, 'scaler.joblib')
+            dump(self.classifier, backup_model_path)
+            dump(self.scaler, backup_scaler_path)
+            
             return {
                 'model_path': model_path,
                 'scaler_path': scaler_path,
-                'feature_selector_path': os.path.join(output_dir, 'feature_selector.joblib') if self.feature_selector else None
+                'feature_selector_path': os.path.join(model_dir, 'feature_selector.joblib') if self.feature_selector else None
             }
             
         except Exception as e:

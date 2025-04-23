@@ -71,6 +71,18 @@
                                 <input class="form-control" type="file" id="image" name="image" accept="image/*" required>
                                 <div class="form-text">Upload a clear image of the skin lesion for analysis.</div>
                             </div>
+                            <div class="mb-4">
+                                <label for="classifier_type" class="form-label">Select model type</label>
+                                <select class="form-control" id="classifier_type" name="classifier_type">
+                                    <option value="svm_rbf">Support Vector Machine (RBF)</option>
+                                    <option value="svm_sigmoid">Support Vector Machine (Sigmoid)</option>
+                                    <option value="svm_poly">Support Vector Machine (Polynomial)</option>
+                                    <option value="rf">Random Forest</option>
+                                    <option value="knn">K-Nearest Neighbors</option>
+                                    <option value="mlp">Neural Network (MLP)</option>
+                                </select>
+                                <div class="form-text">Different models may perform better on different types of images.</div>
+                            </div>
                             <div class="text-center">
                                 <button type="submit" class="btn btn-primary btn-lg px-4">Analyze Image</button>
                             </div>

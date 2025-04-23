@@ -1,0 +1,67 @@
+Melanoma Detection Model Training Summary
+=========================================
+
+Training completed on: 2025-04-23 18:29:22
+
+Results by classifier:
+--------------------------------------------------------------------------------
+
+Classifier: SVM (RBF)
+--------------------
+Performance Metrics:
+
+Feature Information:
+  Total Features: 303
+  Selected Features: 147
+  Feature Reduction: 51.49%
+
+
+Classifier: SVM (Sigmoid)
+------------------------
+Performance Metrics:
+
+Feature Information:
+  Total Features: 303
+  Selected Features: 148
+  Feature Reduction: 51.16%
+
+
+Classifier: SVM (Poly)
+---------------------
+Performance Metrics:
+
+Feature Information:
+  Total Features: 303
+  Selected Features: 149
+  Feature Reduction: 50.83%
+
+
+Classifier: MLP
+--------------
+Performance Metrics:
+
+Feature Information:
+  Total Features: 303
+  Selected Features: 148
+  Feature Reduction: 51.16%
+
+
+Classifier: KNN
+--------------
+Performance Metrics:
+
+Feature Information:
+  Total Features: 303
+  Selected Features: 147
+  Feature Reduction: 51.49%
+
+
+Summary Table:
+--------------------------------------------------------------------------------
+               Accuracy (%)  AUC ROC (%)  AUC PR (%)  Sensitivity (%)  Specificity (%)  Precision (%)  F1 Score (%)  Total Features  Selected Features  Feature Reduction (%)
+SVM (RBF)             50.00        50.00       75.00           100.00             0.00          50.00         66.67          303.00             147.00                  51.49
+SVM (Sigmoid)         75.00       100.00      100.00           100.00            50.00          66.67         80.00          303.00             148.00                  51.16
+SVM (Poly)            50.00        50.00       75.00             0.00           100.00           0.00          0.00          303.00             149.00                  50.83
+MLP                   50.00        50.00       70.83            50.00            50.00          50.00         50.00          303.00             148.00                  51.16
+KNN                   50.00        50.00       75.00           100.00             0.00          50.00         66.67          303.00             147.00                  51.49
+

@@ -57,161 +57,17 @@ def about():
     """Render the about page with information on the melanoma detection method."""
     return render_template('about.html')
     
-@app.route('/comparison')
-def comparison():
-    """Render the model comparison page showing performance tables."""
-    return render_template('comparison.html')
+# Remove comparison route to disable web display of model comparisons
 
-@app.route('/history')
-def history():
-    """Render the history page showing past analyses and training records."""
-    # This is a placeholder. In a real app, you'd retrieve actual records
-    analyses = [
-        {
-            'id': '123456',
-            'date': '2025-04-18',
-            'result': 'Benign',
-            'confidence': 0.89
-        }
-    ]
-    return render_template('history.html', analyses=analyses)
+# History functionality removed
 
-@app.route('/upload_training_images', methods=['POST'])
-def upload_training_images():
-    """Upload training images for model building."""
-    if 'images' not in request.files:
-        flash("No images selected", "danger")
-        return redirect(url_for('train'))
-    
-    # Get the image type (melanoma or benign)
-    image_type = request.form.get('image_type', '')
-    if image_type not in ['melanoma', 'benign']:
-        flash("Invalid image type", "danger")
-        return redirect(url_for('train'))
-    
-    # Define the save directory
-    save_dir = os.path.join(DATA_FOLDER, image_type)
-    os.makedirs(save_dir, exist_ok=True)
-    
-    # Process and save multiple uploaded files
-    files = request.files.getlist('images')
-    saved_count = 0
-    
-    for file in files:
-        if file and file.filename:
-            # Create a secure filename
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"{timestamp}_{file.filename}"
-            file_path = os.path.join(save_dir, filename)
-            
-            try:
-                # Save the file
-                file.save(file_path)
-                saved_count += 1
-                
-                # Validate the image
-                validator = ImageValidator()
-                image = cv2.imread(file_path)
-                
-                if image is None:
-                    os.remove(file_path)
-                    app.logger.warning(f"Could not read image: {filename}")
-                    continue
-                    
-                is_valid, message = validator.validate_skin_image(image)
-                
-                if not is_valid:
-                    os.remove(file_path)
-                    app.logger.warning(f"Invalid image removed: {filename}, reason: {message}")
-                    continue
-                    
-            except Exception as e:
-                app.logger.error(f"Error saving file {filename}: {str(e)}")
-                flash(f"Error saving file {filename}: {str(e)}", "danger")
-    
-    flash(f"Successfully uploaded {saved_count} {image_type} images.", "success")
-    return redirect(url_for('train'))
+# Training image upload functionality removed - only available through manual CLI tools
 
-@app.route('/train', methods=['GET', 'POST'])
+@app.route('/train')
 def train():
-    """Train the classifier with uploaded images."""
-    if request.method == 'POST':
-        try:
-            # Get training parameters
-            n_segments = int(request.form.get('n_segments', 20))
-            compactness = float(request.form.get('compactness', 10.0))
-            connectivity_threshold = float(request.form.get('connectivity_threshold', 0.5))
-            classifier_type = request.form.get('classifier', 'svm')
-            
-            # Initialize dataset handler
-            from src.dataset_handler import DatasetHandler
-            dataset_handler = DatasetHandler(
-                n_segments=n_segments,
-                compactness=compactness,
-                connectivity_threshold=connectivity_threshold
-            )
-            
-            # Process dataset
-            app.logger.info("Processing dataset...")
-            melanoma_dir = os.path.join(DATA_FOLDER, "melanoma")
-            benign_dir = os.path.join(DATA_FOLDER, "benign")
-            
-            # Check if directories contain images
-            melanoma_files = [f for f in os.listdir(melanoma_dir) if f.endswith(('.jpg', '.jpeg', '.png'))]
-            benign_files = [f for f in os.listdir(benign_dir) if f.endswith(('.jpg', '.jpeg', '.png'))]
-            
-            if len(melanoma_files) == 0 or len(benign_files) == 0:
-                flash("Please upload training images first. You need at least one melanoma and one benign image.", "danger")
-                return redirect(url_for('train'))
-            
-            graphs, labels = dataset_handler.process_dataset(
-                melanoma_dir,
-                benign_dir
-            )
-            
-            # Split dataset
-            train_graphs, test_graphs, train_labels, test_labels = \
-                dataset_handler.split_dataset(graphs, labels)
-            
-            # Initialize classifier
-            classifier = MelanomaClassifier(classifier_type=classifier_type)
-            
-            # Prepare features
-            app.logger.info("Preparing features...")
-            X_train = classifier.prepare_features(train_graphs)
-            X_test = classifier.prepare_features(test_graphs)
-            
-            # Train and evaluate
-            app.logger.info("Training and evaluating model...")
-            results = classifier.train_evaluate(X_train, train_labels)
-            
-            # Save model
-            model_path = os.path.join(MODEL_FOLDER, 'melanoma_classifier.joblib')
-            scaler_path = os.path.join(MODEL_FOLDER, 'scaler.joblib')
-            classifier.save_model(MODEL_FOLDER)
-            
-            # Get evaluation metrics
-            accuracy = results['accuracy']
-            precision = results['precision']
-            recall = results['recall']
-            f1 = results['f1']
-            
-            flash(f"Model trained successfully! Accuracy: {accuracy:.2f}, Precision: {precision:.2f}, Recall: {recall:.2f}", "success")
-            
-            return render_template('train_results.html', 
-                                  accuracy=accuracy,
-                                  precision=precision,
-                                  recall=recall,
-                                  f1=f1,
-                                  melanoma_count=len(melanoma_files),
-                                  benign_count=len(benign_files))
-            
-        except Exception as e:
-            app.logger.error(f"Error during training: {str(e)}")
-            flash(f"Error during training: {str(e)}", "danger")
-            return redirect(url_for('train'))
-    
-    return render_template('train.html')
+    """Inform users that models can only be trained via the command line."""
+    flash("Training functionality is only available via the command line using manual_run_main.py. Please contact the administrator for model training.", "info")
+    return redirect(url_for('index'))
 
 @app.route('/analyze', methods=['POST'])
 def analyze():
@@ -226,6 +82,22 @@ def analyze():
         if image_file.filename == '':
             flash("No image selected", "danger")
             return redirect(url_for('index'))
+        
+        # Get the selected classifier type
+        classifier_type = request.form.get('classifier_type', 'svm_rbf')
+        
+        # Map the form value to the actual classifier type
+        classifier_map = {
+            'svm_rbf': 'svm',  # Default SVM uses RBF kernel
+            'svm_sigmoid': 'svm_sigmoid',
+            'svm_poly': 'svm_poly',
+            'rf': 'rf',
+            'knn': 'knn',
+            'mlp': 'mlp'
+        }
+        
+        # Use the mapped classifier type or default to SVM
+        actual_classifier_type = classifier_map.get(classifier_type, 'svm')
         
         # Generate unique ID for this analysis
         analysis_id = str(uuid.uuid4())
@@ -243,7 +115,7 @@ def analyze():
         graph_constructor = GraphConstructor(connectivity_threshold=0.5)
         feature_extractor = FeatureExtractor()
         conv_feature_extractor = ConventionalFeatureExtractor()
-        classifier = MelanomaClassifier(classifier_type='svm')
+        classifier = MelanomaClassifier(classifier_type=actual_classifier_type)
         image_validator = ImageValidator()
         visualizer = Visualizer()
         
@@ -300,28 +172,86 @@ def analyze():
             conventional_features = conv_feature_extractor.extract_all_features(original_image, lesion_mask)
             G.graph['conventional_features'] = conventional_features
             
-            # Check if model exists
-            model_path = os.path.join(MODEL_FOLDER, 'melanoma_classifier.joblib')
-            scaler_path = os.path.join(MODEL_FOLDER, 'scaler.joblib')
+            # Determine the model path based on classifier type
+            if classifier_type == 'svm_rbf':
+                model_dir = os.path.join(MODEL_FOLDER, 'SVM_RBF')
+            elif classifier_type == 'svm_sigmoid':
+                model_dir = os.path.join(MODEL_FOLDER, 'SVM_Sigmoid')
+            elif classifier_type == 'svm_poly':
+                model_dir = os.path.join(MODEL_FOLDER, 'SVM_Poly')
+            elif classifier_type == 'rf':
+                model_dir = os.path.join(MODEL_FOLDER, 'RF')
+            elif classifier_type == 'knn':
+                model_dir = os.path.join(MODEL_FOLDER, 'KNN')
+            elif classifier_type == 'mlp':
+                model_dir = os.path.join(MODEL_FOLDER, 'MLP')
+            else:
+                model_dir = os.path.join(MODEL_FOLDER, 'SVM_RBF')  # Default
             
+            # Check if specific model exists
+            model_path = os.path.join(model_dir, 'model.joblib')
+            scaler_path = os.path.join(model_dir, 'scaler.joblib')
+            feature_selector_path = os.path.join(model_dir, 'feature_selector.joblib')
+            
+            # If the specific model doesn't exist, fall back to default model
             if not os.path.exists(model_path) or not os.path.exists(scaler_path):
-                flash("No trained model found. Please train the model first.", "warning")
-                return redirect(url_for('train'))
+                app.logger.warning(f"Model {classifier_type} not found, using default model instead")
+                model_path = os.path.join(MODEL_FOLDER, 'melanoma_classifier.joblib')
+                scaler_path = os.path.join(MODEL_FOLDER, 'scaler.joblib')
+                feature_selector_path = os.path.join(MODEL_FOLDER, 'feature_selector.joblib')
+                
+                # If even the default model doesn't exist, prompt to train
+                if not os.path.exists(model_path) or not os.path.exists(scaler_path):
+                    flash("No trained models found. Please train the models first.", "warning")
+                    return redirect(url_for('train'))
             
-            # Load model
+            # Load model and scaler
             model = load(model_path)
             scaler = load(scaler_path)
+            
+            app.logger.info(f"Using model: {model_path}")
+            
+            # Check if feature selector exists and load it
+            feature_selector = None
+            if os.path.exists(feature_selector_path):
+                app.logger.info(f"Using feature selector: {feature_selector_path}")
+                feature_selector = load(feature_selector_path)
             
             # Prepare features for prediction
             X = classifier.prepare_features([G])
             X_scaled = scaler.transform(X)
             
-            # Make prediction
-            prediction = model.predict(X_scaled)[0]
-            probability = model.predict_proba(X_scaled)[0][1]
-            prediction_label = "Melanoma" if prediction == 1 else "Benign"
+            # Apply feature selection if available
+            if feature_selector is not None:
+                X_selected = feature_selector.transform(X_scaled)
+                app.logger.info(f"Feature selection applied: {X.shape[1]} features reduced to {X_selected.shape[1]}")
+                
+                # Make prediction with selected features
+                prediction = model.predict(X_selected)[0]
+                probability = model.predict_proba(X_selected)[0][1] if hasattr(model, 'predict_proba') else 0.5
+            else:
+                # Make prediction without feature selection
+                prediction = model.predict(X_scaled)[0]
+                probability = model.predict_proba(X_scaled)[0][1] if hasattr(model, 'predict_proba') else 0.5
             
-            # Store result
+            prediction_label = "Melanoma" if prediction == 1 else "Benign"
+            probability_pct = probability * 100
+            
+            # Determine risk level based on probability
+            if probability_pct > 75:
+                risk_level = "HIGH"
+                explanation = "High probability of melanoma. Immediate medical consultation recommended."
+            elif probability_pct > 50:
+                risk_level = "MODERATE TO HIGH"
+                explanation = "Elevated probability of melanoma. Prompt medical consultation recommended."
+            elif probability_pct > 25:
+                risk_level = "MODERATE"
+                explanation = "Some features of concern present. Medical evaluation advised."
+            else:
+                risk_level = "LOW"
+                explanation = "Low probability of melanoma. Regular self-examination advised."
+            
+            # Store result with enhanced information
             result = {
                 'analysis_id': analysis_id,
                 'timestamp': timestamp,
@@ -331,7 +261,12 @@ def analyze():
                 'graph_image_path': graph_image_path,
                 'prediction': prediction_label,
                 'probability': probability,
-                'features_extracted': len(X[0])
+                'probability_pct': probability_pct,
+                'risk_level': risk_level,
+                'explanation': explanation,
+                'validation_message': validation_message,
+                'features_extracted': len(X[0]),
+                'features_selected': X_selected.shape[1] if feature_selector is not None else None
             }
             
             # In a real app, you'd store this in a database
@@ -414,13 +349,40 @@ def api_predict():
         # Store conventional features in the graph
         G.graph['conventional_features'] = conventional_features
 
-        # Load trained model
-        model_path = os.path.join(MODEL_FOLDER, 'melanoma_classifier.joblib')
-        scaler_path = os.path.join(MODEL_FOLDER, 'scaler.joblib')
-        feature_selector_path = os.path.join(MODEL_FOLDER, 'feature_selector.joblib')
-
+        # Get the classifier type from query params or default to SVM_RBF
+        classifier_type = request.args.get('classifier_type', 'svm_rbf')
+        
+        # Determine the model path based on classifier type
+        if classifier_type == 'svm_rbf':
+            model_dir = os.path.join(MODEL_FOLDER, 'SVM_RBF')
+        elif classifier_type == 'svm_sigmoid':
+            model_dir = os.path.join(MODEL_FOLDER, 'SVM_Sigmoid')
+        elif classifier_type == 'svm_poly':
+            model_dir = os.path.join(MODEL_FOLDER, 'SVM_Poly')
+        elif classifier_type == 'rf':
+            model_dir = os.path.join(MODEL_FOLDER, 'RF')
+        elif classifier_type == 'knn':
+            model_dir = os.path.join(MODEL_FOLDER, 'KNN')
+        elif classifier_type == 'mlp':
+            model_dir = os.path.join(MODEL_FOLDER, 'MLP')
+        else:
+            model_dir = os.path.join(MODEL_FOLDER, 'SVM_RBF')  # Default
+        
+        # Check if specific model exists
+        model_path = os.path.join(model_dir, 'model.joblib')
+        scaler_path = os.path.join(model_dir, 'scaler.joblib')
+        feature_selector_path = os.path.join(model_dir, 'feature_selector.joblib')
+        
+        # If the specific model doesn't exist, fall back to default model
         if not os.path.exists(model_path) or not os.path.exists(scaler_path):
-            return jsonify({"error": "Model not found. Train the model first."}), 500
+            app.logger.warning(f"Model {classifier_type} not found in API call, using default model instead")
+            model_path = os.path.join(MODEL_FOLDER, 'melanoma_classifier.joblib')
+            scaler_path = os.path.join(MODEL_FOLDER, 'scaler.joblib')
+            feature_selector_path = os.path.join(MODEL_FOLDER, 'feature_selector.joblib')
+            
+            # If even the default model doesn't exist, return an error
+            if not os.path.exists(model_path) or not os.path.exists(scaler_path):
+                return jsonify({"error": "Model not found. Train the model first."}), 500
 
         model = load(model_path)
         scaler = load(scaler_path)
@@ -434,20 +396,54 @@ def api_predict():
         X = classifier.prepare_features([G])
         X_scaled = scaler.transform(X)
         
-        # Skip feature selection to ensure dimension consistency
+        # Apply feature selection if available
         if feature_selector is not None:
-            app.logger.warning("Feature selector exists but will not be used to ensure dimension consistency")
-            
-        probability = model.predict_proba(X_scaled)[0][1]
-        risk_level = "HIGH" if probability > 0.5 else "LOW"
+            try:
+                X_selected = feature_selector.transform(X_scaled)
+                app.logger.info(f"Feature selection applied: {X.shape[1]} features reduced to {X_selected.shape[1]}")
+                
+                # Make prediction with selected features
+                prediction = model.predict(X_selected)[0]
+                probability = model.predict_proba(X_selected)[0][1] if hasattr(model, 'predict_proba') else 0.5
+            except Exception as fs_error:
+                app.logger.warning(f"Error applying feature selection: {str(fs_error)}. Using full feature set.")
+                prediction = model.predict(X_scaled)[0]
+                probability = model.predict_proba(X_scaled)[0][1] if hasattr(model, 'predict_proba') else 0.5
+        else:
+            # Make prediction without feature selection
+            prediction = model.predict(X_scaled)[0]
+            probability = model.predict_proba(X_scaled)[0][1] if hasattr(model, 'predict_proba') else 0.5
+        
+        prediction_label = "Melanoma" if prediction == 1 else "Benign"
+        probability_pct = probability * 100
+        
+        # Determine risk level based on probability
+        explanation = ""
+        if probability_pct > 75:
+            risk_level = "HIGH"
+            explanation = "High probability of melanoma. Immediate medical consultation recommended."
+        elif probability_pct > 50:
+            risk_level = "MODERATE TO HIGH"
+            explanation = "Elevated probability of melanoma. Prompt medical consultation recommended."
+        elif probability_pct > 25:
+            risk_level = "MODERATE"
+            explanation = "Some features of concern present. Medical evaluation advised."
+        else:
+            risk_level = "LOW"
+            explanation = "Low probability of melanoma. Regular self-examination advised."
 
         return jsonify({
             "status": 200,
             "message": "Image processed successfully",
             "data": {
+                "prediction": prediction_label,
                 "probability": float(probability),
+                "probability_percent": float(probability_pct),
                 "risk_level": risk_level,
-                "validation": validation_message
+                "explanation": explanation,
+                "validation": validation_message,
+                "features_extracted": len(X[0]),
+                "features_used": X_selected.shape[1] if feature_selector is not None and 'X_selected' in locals() else len(X[0])
             }}), 200
 
     except Exception as e:
