@@ -5,6 +5,7 @@ from src.superpixel import SuperpixelGenerator
 from src.graph_construction import GraphConstructor
 from src.feature_extraction import FeatureExtractor
 from src.conventional_features import ConventionalFeatureExtractor
+from src.dermoscopic_features import DermoscopicFeatureDetector
 import logging
 from typing import List, Tuple
 import glob
@@ -31,6 +32,7 @@ class DatasetHandler:
         self.graph_constructor = GraphConstructor(connectivity_threshold)
         self.feature_extractor = FeatureExtractor()
         self.conv_feature_extractor = ConventionalFeatureExtractor()
+        self.dermo_feature_detector = DermoscopicFeatureDetector()
         self.max_images_per_class = max_images_per_class
         # Create necessary directories
         os.makedirs('data/bcc', exist_ok=True)
@@ -78,10 +80,15 @@ class DatasetHandler:
         """Process all images in a directory and return their graph representations."""
         try:
             graphs = []
+            # Search for image files with case-insensitive extensions
             image_files = glob.glob(os.path.join(directory, "*.jpg")) + \
                          glob.glob(os.path.join(directory, "*.jpeg")) + \
                          glob.glob(os.path.join(directory, "*.png")) + \
-                         glob.glob(os.path.join(directory, "*.bmp"))
+                         glob.glob(os.path.join(directory, "*.bmp")) + \
+                         glob.glob(os.path.join(directory, "*.JPG")) + \
+                         glob.glob(os.path.join(directory, "*.JPEG")) + \
+                         glob.glob(os.path.join(directory, "*.PNG")) + \
+                         glob.glob(os.path.join(directory, "*.BMP"))
                          
             if not image_files:
                 self.logger.warning(f"No image files found in directory: {directory}")
@@ -123,8 +130,13 @@ class DatasetHandler:
                     conventional_features = self.conv_feature_extractor.extract_all_features(
                         original_image, lesion_mask)
                     
-                    # Store conventional features in the graph
+                    # Extract specialized dermoscopic features (highly important for BCC vs SK)
+                    dermoscopic_features = self.dermo_feature_detector.detect_all_features(
+                        original_image, lesion_mask)
+                    
+                    # Store all features in the graph
                     G.graph['conventional_features'] = conventional_features
+                    G.graph['dermoscopic_features'] = dermoscopic_features
                     
                     graphs.append(G)
                 except Exception as e:

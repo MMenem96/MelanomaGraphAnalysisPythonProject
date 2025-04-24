@@ -3,15 +3,15 @@ import shutil
 import os
 
 # Load the CSV file
-csv_file = "C:/Users/MMenem/Downloads/Compressed/ISIC-images/metadata.csv"
+csv_file = "/Users/mmoniem96/Downloads/ISIC-images/metadata.csv"
 df = pd.read_csv(csv_file) 
 
 # Path to the image folder
-image_folder = "C:/Users/MMenem/Downloads/Compressed/ISIC-images"
+image_folder = "/Users/mmoniem96/Downloads/ISIC-images/"
 
 # Paths to the destination folders
-benign_folder = "data/benign"
-malignant_folder = "data/melanoma"
+benign_folder = "data/sk"
+malignant_folder = "data/bcc"
 
 # Create the destination folders if they don't exist
 os.makedirs(benign_folder, exist_ok=True)
@@ -39,3 +39,5 @@ for index, row in df.iterrows():
         shutil.copy(source_image_path, destination_path)
     else:
         print(f"Image {image_filename} not found!")
+        print(f"source_image_path {source_image_path} not found!")
+        print(f"destination_path {destination_path} not found!")

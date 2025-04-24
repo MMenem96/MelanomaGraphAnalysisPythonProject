@@ -14,9 +14,10 @@ from joblib import dump, load
 from sklearn.metrics import (
     accuracy_score, recall_score, confusion_matrix, roc_auc_score,
     precision_score, f1_score, roc_curve, precision_recall_curve, auc,
-    brier_score_loss, calibration_curve
+    brier_score_loss
 )
-from sklearn.model_selection import learning_curve
+from sklearn.calibration import calibration_curve
+from sklearn.model_selection import learning_curve, StratifiedKFold
 from sklearn.inspection import permutation_importance
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
@@ -1306,29 +1307,79 @@ def plot_learning_curve(estimator, X, y, cv=5, n_jobs=None, train_sizes=np.linsp
     """
     plt.figure(figsize=(10, 6))
     
-    train_sizes, train_scores, test_scores = learning_curve(
-        estimator, X, y, cv=cv, n_jobs=n_jobs, train_sizes=train_sizes, 
-        scoring='accuracy', shuffle=True, random_state=42
-    )
+    # Check if there are multiple classes in the dataset
+    unique_classes = np.unique(y)
+    if len(unique_classes) < 2:
+        # Handle the special case of single-class datasets
+        plt.text(0.5, 0.5, "Cannot generate learning curve: Only one class in dataset",
+                horizontalalignment='center', verticalalignment='center',
+                transform=plt.gca().transAxes, fontsize=12)
+        plt.title(title)
+        if save_path:
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+            plt.close()
+            return save_path
+        else:
+            plt.show()
+            return None
     
-    train_scores_mean = np.mean(train_scores, axis=1) * 100
-    train_scores_std = np.std(train_scores, axis=1) * 100
-    test_scores_mean = np.mean(test_scores, axis=1) * 100
-    test_scores_std = np.std(test_scores, axis=1) * 100
+    try:
+        # Use StratifiedKFold to ensure each fold has samples of each class
+        if isinstance(cv, int):
+            # If cv is an integer, create a StratifiedKFold
+            cv = StratifiedKFold(n_splits=min(cv, np.min(np.bincount(y.astype(int)))), 
+                                shuffle=True, random_state=42)
+        
+        # Set error_score to 'raise' for debugging, then handle exceptions
+        train_sizes, train_scores, test_scores = learning_curve(
+            estimator, X, y, cv=cv, n_jobs=n_jobs, train_sizes=train_sizes, 
+            scoring='accuracy', error_score=np.nan, random_state=42
+        )
+        
+        # Filter out NaN values that might result from failed CV folds
+        valid_indices = ~np.isnan(train_scores).any(axis=1) & ~np.isnan(test_scores).any(axis=1)
+        
+        if not valid_indices.any():
+            # No valid scores, likely due to single-class folds
+            plt.text(0.5, 0.5, "Learning curve generation failed: Check for balanced classes",
+                    horizontalalignment='center', verticalalignment='center',
+                    transform=plt.gca().transAxes, fontsize=12)
+            plt.title(title)
+        else:
+            # Use only valid indices
+            valid_train_sizes = train_sizes[valid_indices]
+            valid_train_scores = train_scores[valid_indices]
+            valid_test_scores = test_scores[valid_indices]
+            
+            train_scores_mean = np.mean(valid_train_scores, axis=1) * 100
+            train_scores_std = np.std(valid_train_scores, axis=1) * 100
+            test_scores_mean = np.mean(valid_test_scores, axis=1) * 100
+            test_scores_std = np.std(valid_test_scores, axis=1) * 100
+            
+            plt.fill_between(valid_train_sizes, train_scores_mean - train_scores_std,
+                            train_scores_mean + train_scores_std, alpha=0.1, color="r")
+            plt.fill_between(valid_train_sizes, test_scores_mean - test_scores_std,
+                            test_scores_mean + test_scores_std, alpha=0.1, color="g")
+            
+            plt.plot(valid_train_sizes, train_scores_mean, 'o-', color="r", label="Training score")
+            plt.plot(valid_train_sizes, test_scores_mean, 'o-', color="g", label="Cross-validation score")
+            
+            plt.title(title)
+            plt.xlabel("Training examples")
+            plt.ylabel("Accuracy (%)")
+            plt.legend(loc="best")
+            plt.grid(True)
     
-    plt.fill_between(train_sizes, train_scores_mean - train_scores_std,
-                     train_scores_mean + train_scores_std, alpha=0.1, color="r")
-    plt.fill_between(train_sizes, test_scores_mean - test_scores_std,
-                     test_scores_mean + test_scores_std, alpha=0.1, color="g")
-    
-    plt.plot(train_sizes, train_scores_mean, 'o-', color="r", label="Training score")
-    plt.plot(train_sizes, test_scores_mean, 'o-', color="g", label="Cross-validation score")
-    
-    plt.title(title)
-    plt.xlabel("Training examples")
-    plt.ylabel("Accuracy (%)")
-    plt.legend(loc="best")
-    plt.grid(True)
+    except Exception as e:
+        # Handle exceptions with a meaningful error message in the plot
+        error_message = f"Learning curve error: {str(e)}"
+        if "classes" in str(e) and "one" in str(e):
+            error_message = "Error: Some cross-validation folds have only one class"
+        
+        plt.text(0.5, 0.5, error_message,
+                horizontalalignment='center', verticalalignment='center',
+                transform=plt.gca().transAxes, fontsize=12, wrap=True)
+        plt.title(title)
     
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
@@ -1351,35 +1402,69 @@ def plot_calibration_curve(clf, X, y, name, save_path=None):
     """
     plt.figure(figsize=(10, 6))
     
-    if hasattr(clf, "predict_proba"):
-        prob_pos = clf.predict_proba(X)[:, 1]
-        
-        # Calculate Brier score loss
-        brier_score = brier_score_loss(y, prob_pos)
-        
-        # Plot calibration curve
-        fraction_of_positives, mean_predicted_value = calibration_curve(y, prob_pos, n_bins=10)
-        
-        # Plot perfectly calibrated
-        plt.plot([0, 1], [0, 1], linestyle='--', label='Perfectly calibrated')
-        
-        # Plot model calibration curve
-        plt.plot(mean_predicted_value, fraction_of_positives, "s-", label=f"{name} (Brier score: {brier_score:.3f})")
-        
-        plt.ylabel("Fraction of positives (Empirical)")
-        plt.xlabel("Mean predicted probability (Model)")
-        plt.title(f'Calibration Curve for {name}')
-        plt.legend(loc="best")
-        plt.grid(True)
-        
+    # Check if there are multiple classes in the dataset
+    unique_classes = np.unique(y)
+    if len(unique_classes) < 2:
+        # Handle the special case of single-class datasets
+        plt.text(0.5, 0.5, "Cannot generate calibration curve: Only one class in dataset",
+                horizontalalignment='center', verticalalignment='center',
+                transform=plt.gca().transAxes, fontsize=12)
+        plt.title(f"Calibration Curve for {name}")
         if save_path:
             plt.savefig(save_path, dpi=300, bbox_inches='tight')
             plt.close()
             return save_path
-    else:
-        plt.text(0.5, 0.5, f"Classifier {name} does not support predict_proba",
-                horizontalalignment='center', verticalalignment='center')
-        plt.title("Calibration Curve Not Available")
+        return None
+    
+    try:
+        if hasattr(clf, "predict_proba"):
+            prob_pos = clf.predict_proba(X)[:, 1]
+            
+            # Calculate Brier score loss
+            brier_score = brier_score_loss(y, prob_pos)
+            
+            # Plot calibration curve
+            try:
+                fraction_of_positives, mean_predicted_value = calibration_curve(y, prob_pos, n_bins=min(10, len(y) // 2))
+                
+                # Plot perfectly calibrated
+                plt.plot([0, 1], [0, 1], linestyle='--', label='Perfectly calibrated')
+                
+                # Plot model calibration curve
+                plt.plot(mean_predicted_value, fraction_of_positives, "s-", 
+                         label=f"{name} (Brier score: {brier_score:.3f})")
+                
+                plt.ylabel("Fraction of positives (Empirical)")
+                plt.xlabel("Mean predicted probability (Model)")
+                plt.title(f'Calibration Curve for {name}')
+                plt.legend(loc="best")
+                plt.grid(True)
+            except Exception as e:
+                # Handle specific issues with calibration curve calculation
+                plt.text(0.5, 0.5, f"Calibration curve error: {str(e)}",
+                        horizontalalignment='center', verticalalignment='center',
+                        transform=plt.gca().transAxes, fontsize=12)
+                plt.title(f"Calibration Issues for {name}")
+            
+            if save_path:
+                plt.savefig(save_path, dpi=300, bbox_inches='tight')
+                plt.close()
+                return save_path
+        else:
+            plt.text(0.5, 0.5, f"Classifier {name} does not support predict_proba",
+                    horizontalalignment='center', verticalalignment='center',
+                    transform=plt.gca().transAxes, fontsize=12)
+            plt.title("Calibration Curve Not Available")
+            if save_path:
+                plt.savefig(save_path, dpi=300, bbox_inches='tight')
+                plt.close()
+                
+    except Exception as e:
+        # General exception handling
+        plt.text(0.5, 0.5, f"Error generating calibration curve: {str(e)}",
+                horizontalalignment='center', verticalalignment='center',
+                transform=plt.gca().transAxes, fontsize=12)
+        plt.title(f"Calibration Error for {name}")
         if save_path:
             plt.savefig(save_path, dpi=300, bbox_inches='tight')
             plt.close()
@@ -1453,33 +1538,64 @@ def plot_prediction_histogram(clf, X, y, save_path=None):
     """
     plt.figure(figsize=(10, 6))
     
-    if hasattr(clf, "predict_proba"):
-        probas = clf.predict_proba(X)
-        pos_probs = probas[:, 1]  # Probability of positive class
-        
-        # Separate probabilities by true class
-        pos_probs_pos = pos_probs[y == 1]
-        pos_probs_neg = pos_probs[y == 0]
-        
-        plt.hist(pos_probs_pos, bins=20, alpha=0.6, color='red', 
-                 label=f'True BCC (n={len(pos_probs_pos)})')
-        plt.hist(pos_probs_neg, bins=20, alpha=0.6, color='green', 
-                 label=f'True SK (n={len(pos_probs_neg)})')
-        
-        plt.xlabel('Predicted Probability of Basal-cell Carcinoma (BCC)')
-        plt.ylabel('Count')
-        plt.title('Histogram of Prediction Probabilities')
-        plt.legend()
-        plt.grid(True, alpha=0.3)
-        
+    # Check if there are multiple classes in the dataset
+    unique_classes = np.unique(y)
+    if len(unique_classes) < 2:
+        # Handle the special case of single-class datasets
+        plt.text(0.5, 0.5, "Cannot generate prediction histogram: Only one class in dataset",
+                horizontalalignment='center', verticalalignment='center',
+                transform=plt.gca().transAxes, fontsize=12)
+        plt.title("Prediction Histogram")
         if save_path:
             plt.savefig(save_path, dpi=300, bbox_inches='tight')
             plt.close()
             return save_path
-    else:
-        plt.text(0.5, 0.5, "This model does not support predict_proba",
-                horizontalalignment='center', verticalalignment='center')
-        plt.title("Prediction Histogram Not Available")
+        return None
+    
+    try:
+        if hasattr(clf, "predict_proba"):
+            probas = clf.predict_proba(X)
+            pos_probs = probas[:, 1]  # Probability of positive class
+            
+            # Separate probabilities by true class
+            pos_probs_pos = pos_probs[y == 1]
+            pos_probs_neg = pos_probs[y == 0]
+            
+            # Calculate appropriate number of bins
+            n_bins = min(20, max(5, min(len(pos_probs_pos), len(pos_probs_neg)) // 2))
+            
+            # Plot histograms - only plot classes that have samples
+            if len(pos_probs_pos) > 0:
+                plt.hist(pos_probs_pos, bins=n_bins, alpha=0.6, color='red', 
+                        label=f'True BCC (n={len(pos_probs_pos)})')
+            if len(pos_probs_neg) > 0:
+                plt.hist(pos_probs_neg, bins=n_bins, alpha=0.6, color='green', 
+                        label=f'True SK (n={len(pos_probs_neg)})')
+            
+            plt.xlabel('Predicted Probability of Basal-cell Carcinoma (BCC)')
+            plt.ylabel('Count')
+            plt.title('Histogram of Prediction Probabilities')
+            plt.legend()
+            plt.grid(True, alpha=0.3)
+            
+            if save_path:
+                plt.savefig(save_path, dpi=300, bbox_inches='tight')
+                plt.close()
+                return save_path
+        else:
+            plt.text(0.5, 0.5, "This model does not support predict_proba",
+                    horizontalalignment='center', verticalalignment='center',
+                    transform=plt.gca().transAxes, fontsize=12)
+            plt.title("Prediction Histogram Not Available")
+            if save_path:
+                plt.savefig(save_path, dpi=300, bbox_inches='tight')
+                plt.close()
+    except Exception as e:
+        # Handle any exceptions
+        plt.text(0.5, 0.5, f"Error generating prediction histogram: {str(e)}",
+                horizontalalignment='center', verticalalignment='center',
+                transform=plt.gca().transAxes, fontsize=12)
+        plt.title("Prediction Histogram Error")
         if save_path:
             plt.savefig(save_path, dpi=300, bbox_inches='tight')
             plt.close()
@@ -1498,54 +1614,89 @@ def plot_f1_threshold_curve(clf, X, y, save_path=None):
     """
     plt.figure(figsize=(10, 6))
     
-    if hasattr(clf, "predict_proba"):
-        y_scores = clf.predict_proba(X)[:, 1]
-        
-        # Calculate F1 score for different thresholds
-        thresholds = np.linspace(0, 1, 100)
-        f1_scores = []
-        precision_scores = []
-        recall_scores = []
-        
-        for threshold in thresholds:
-            y_pred = (y_scores >= threshold).astype(int)
-            f1 = f1_score(y, y_pred, zero_division=0)
-            precision = precision_score(y, y_pred, zero_division=0)
-            recall = recall_score(y, y_pred, zero_division=0)
-            
-            f1_scores.append(f1)
-            precision_scores.append(precision)
-            recall_scores.append(recall)
-        
-        # Find threshold with best F1 score
-        best_threshold_idx = np.argmax(f1_scores)
-        best_threshold = thresholds[best_threshold_idx]
-        best_f1 = f1_scores[best_threshold_idx]
-        
-        # Plot curves
-        plt.plot(thresholds, f1_scores, 'b-', label='F1 Score')
-        plt.plot(thresholds, precision_scores, 'g-', label='Precision')
-        plt.plot(thresholds, recall_scores, 'r-', label='Recall')
-        
-        # Mark the best threshold
-        plt.axvline(x=best_threshold, color='gray', linestyle='--', alpha=0.7)
-        plt.plot(best_threshold, best_f1, 'bo', markersize=8, 
-                label=f'Best Threshold = {best_threshold:.2f}, F1 = {best_f1:.2f}')
-        
-        plt.xlabel('Decision Threshold')
-        plt.ylabel('Score')
-        plt.title('F1 Score, Precision, and Recall vs. Decision Threshold')
-        plt.legend(loc='best')
-        plt.grid(True)
-        
+    # Check if there are multiple classes in the dataset
+    unique_classes = np.unique(y)
+    if len(unique_classes) < 2:
+        # Handle the special case of single-class datasets
+        plt.text(0.5, 0.5, "Cannot generate F1 threshold curve: Only one class in dataset",
+                horizontalalignment='center', verticalalignment='center',
+                transform=plt.gca().transAxes, fontsize=12)
+        plt.title("F1 Threshold Curve")
         if save_path:
             plt.savefig(save_path, dpi=300, bbox_inches='tight')
             plt.close()
             return save_path
-    else:
-        plt.text(0.5, 0.5, "This model does not support predict_proba",
-                horizontalalignment='center', verticalalignment='center')
-        plt.title("F1 Score Curve Not Available")
+        return None
+    
+    try:
+        if hasattr(clf, "predict_proba"):
+            y_scores = clf.predict_proba(X)[:, 1]
+            
+            # Calculate F1 score for different thresholds
+            thresholds = np.linspace(0, 1, 100)
+            f1_scores = []
+            precision_scores = []
+            recall_scores = []
+            
+            for threshold in thresholds:
+                y_pred = (y_scores >= threshold).astype(int)
+                
+                # Use zero_division=0 to avoid divide by zero errors
+                f1 = f1_score(y, y_pred, zero_division=0)
+                precision = precision_score(y, y_pred, zero_division=0)
+                recall = recall_score(y, y_pred, zero_division=0)
+                
+                f1_scores.append(f1)
+                precision_scores.append(precision)
+                recall_scores.append(recall)
+            
+            # Check if we have valid scores (not all zeros)
+            if max(f1_scores) > 0:
+                # Find threshold with best F1 score
+                best_threshold_idx = np.argmax(f1_scores)
+                best_threshold = thresholds[best_threshold_idx]
+                best_f1 = f1_scores[best_threshold_idx]
+                
+                # Plot curves
+                plt.plot(thresholds, f1_scores, 'b-', label='F1 Score')
+                plt.plot(thresholds, precision_scores, 'g-', label='Precision')
+                plt.plot(thresholds, recall_scores, 'r-', label='Recall')
+                
+                # Mark the best threshold
+                plt.axvline(x=best_threshold, color='gray', linestyle='--', alpha=0.7)
+                plt.plot(best_threshold, best_f1, 'bo', markersize=8, 
+                        label=f'Best Threshold = {best_threshold:.2f}, F1 = {best_f1:.2f}')
+                
+                plt.xlabel('Decision Threshold')
+                plt.ylabel('Score')
+                plt.title('F1 Score, Precision, and Recall vs. Decision Threshold')
+                plt.legend(loc='best')
+                plt.grid(True)
+            else:
+                # No valid F1 scores found
+                plt.text(0.5, 0.5, "Could not generate meaningful F1 curve: All scores are zero",
+                        horizontalalignment='center', verticalalignment='center',
+                        transform=plt.gca().transAxes, fontsize=12)
+                plt.title("F1 Threshold Curve - No Valid Scores")
+            
+            if save_path:
+                plt.savefig(save_path, dpi=300, bbox_inches='tight')
+                plt.close()
+                return save_path
+        else:
+            plt.text(0.5, 0.5, "This model does not support predict_proba",
+                    horizontalalignment='center', verticalalignment='center',
+                    transform=plt.gca().transAxes, fontsize=12)
+            plt.title("F1 Score Curve Not Available")
+            if save_path:
+                plt.savefig(save_path, dpi=300, bbox_inches='tight')
+                plt.close()
+    except Exception as e:
+        # Handle any exceptions gracefully
+        plt.text(0.5, 0.5, f"Error generating F1 threshold curve: {str(e)}",
+                horizontalalignment='center', verticalalignment='center',
+                transform=plt.gca().transAxes, fontsize=12)
+        plt.title("F1 Threshold Curve Error")
         if save_path:
             plt.savefig(save_path, dpi=300, bbox_inches='tight')
             plt.close()

@@ -1,0 +1,22 @@
+Training Summary for SVM (RBF)
+==================================
+
+Performance Metrics:
+  Accuracy: 68.75%
+  AUC: 74.04%
+  Sensitivity/Recall: 62.16%
+  Specificity: 74.42%
+  Precision: 67.65%
+  F1 Score: 64.79%
+  PR-AUC: 67.34%
+
+Feature Information:
+  Total features: 439
+  Selected features: 111
+  Feature reduction: 74.72%
+
+Confusion Matrix:
+  [[32 11]
+   [14 23]]
+
+Training completed on: 2025-04-24 03:44:11

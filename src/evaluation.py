@@ -195,34 +195,89 @@ class ModelEvaluator:
     def _compute_metrics(self, y_true, y_pred, y_proba):
         """Compute comprehensive set of evaluation metrics."""
         try:
+            # Check if we have any predictions at all
+            # This handles the case where the classifier predicts all samples as negative
+            # which would generate the "Precision is ill-defined" warning
+            unique_pred = np.unique(y_pred)
+            
             # Confusion matrix
             cm = confusion_matrix(y_true, y_pred)
             tn, fp, fn, tp = cm.ravel()
             
             # Basic metrics
             accuracy = accuracy_score(y_true, y_pred)
-            precision = precision_score(y_true, y_pred)
-            recall = recall_score(y_true, y_pred)  # Same as sensitivity
-            f1 = f1_score(y_true, y_pred)
             
-            # Specificity
+            # Handle the case where precision is undefined (no positive predictions)
+            if 1 in unique_pred:
+                precision = precision_score(y_true, y_pred)
+            else:
+                self.logger.warning("No positive predictions. Setting precision to 0.0")
+                precision = 0.0
+                
+            # Handle the case where recall might be undefined
+            if np.sum(y_true == 1) > 0:
+                recall = recall_score(y_true, y_pred)  # Same as sensitivity
+            else:
+                self.logger.warning("No positive samples in ground truth. Setting recall to 0.0")
+                recall = 0.0
+                
+            # Handle the case where F1 score might be undefined
+            if precision > 0 or recall > 0:
+                f1 = f1_score(y_true, y_pred)
+            else:
+                self.logger.warning("Both precision and recall are 0. Setting F1 score to 0.0")
+                f1 = 0.0
+            
+            # Specificity - handle division by zero
             specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
             
             # Balanced accuracy
             balanced_acc = (recall + specificity) / 2
             
-            # ROC and PR curves
-            fpr, tpr, _ = roc_curve(y_true, y_proba)
-            auc = roc_auc_score(y_true, y_proba)
-            
-            precision_curve, recall_curve, _ = precision_recall_curve(y_true, y_proba)
-            auc_pr = average_precision_score(y_true, y_proba)
+            # ROC and PR curves - handle cases with single class
+            unique_true = np.unique(y_true)
+            if len(unique_true) > 1 and len(unique_pred) > 1:
+                # Only calculate AUC if we have both classes in predictions and ground truth
+                try:
+                    fpr, tpr, _ = roc_curve(y_true, y_proba)
+                    auc = roc_auc_score(y_true, y_proba)
+                    
+                    precision_curve, recall_curve, _ = precision_recall_curve(y_true, y_proba)
+                    auc_pr = average_precision_score(y_true, y_proba)
+                except Exception as e:
+                    self.logger.warning(f"Error calculating ROC/PR curves: {str(e)}. Using default values.")
+                    fpr, tpr = [0, 1], [0, 1]
+                    precision_curve, recall_curve = [0, 1], [1, 0]
+                    auc = 0.5
+                    auc_pr = 0.5
+            else:
+                self.logger.warning("Only one class present. ROC/PR curves will be trivial.")
+                fpr, tpr = [0, 1], [0, 1]
+                precision_curve, recall_curve = [0, 1], [1, 0]
+                auc = 0.5
+                auc_pr = 0.5
             
             # Additional metrics
-            mcc = matthews_corrcoef(y_true, y_pred)
-            kappa = cohen_kappa_score(y_true, y_pred)
+            # Handle cases where metrics might be undefined
+            try:
+                mcc = matthews_corrcoef(y_true, y_pred)
+            except Exception:
+                self.logger.warning("Error calculating Matthews correlation coefficient. Setting to 0.0")
+                mcc = 0.0
+                
+            try:
+                kappa = cohen_kappa_score(y_true, y_pred)
+            except Exception:
+                self.logger.warning("Error calculating Cohen's kappa. Setting to 0.0")
+                kappa = 0.0
             
             # Collect all metrics
+            # Check if values are already lists or numpy arrays
+            def safe_tolist(arr):
+                if hasattr(arr, 'tolist'):
+                    return arr.tolist()
+                return list(arr)  # Convert any iterable to a list
+            
             metrics = {
                 'accuracy': accuracy,
                 'precision': precision,
@@ -239,12 +294,12 @@ class ModelEvaluator:
                     'matrix': cm.tolist()
                 },
                 'roc_curve': {
-                    'fpr': fpr.tolist(),
-                    'tpr': tpr.tolist()
+                    'fpr': safe_tolist(fpr),
+                    'tpr': safe_tolist(tpr)
                 },
                 'pr_curve': {
-                    'precision': precision_curve.tolist(),
-                    'recall': recall_curve.tolist()
+                    'precision': safe_tolist(precision_curve),
+                    'recall': safe_tolist(recall_curve)
                 }
             }
             
@@ -264,19 +319,43 @@ class ModelEvaluator:
     def _create_visualizations(self, y_true, y_pred, y_proba):
         """Create and save evaluation visualizations."""
         try:
+            # Check if we have enough data for meaningful visualizations
+            unique_true = np.unique(y_true)
+            unique_pred = np.unique(y_pred)
+            
             # 1. Confusion Matrix
             cm = confusion_matrix(y_true, y_pred)
-            self._plot_confusion_matrix(cm, ['Benign', 'Melanoma'])
+            # Use BCC and SK class names instead of the generic 'Benign' and 'Melanoma'
+            self._plot_confusion_matrix(cm, ['SK', 'BCC'])
             
-            # 2. ROC Curve
-            fpr, tpr, _ = roc_curve(y_true, y_proba)
-            auc = roc_auc_score(y_true, y_proba)
-            self._plot_roc_curve(fpr, tpr, auc)
-            
-            # 3. Precision-Recall Curve
-            precision, recall, _ = precision_recall_curve(y_true, y_proba)
-            auc_pr = average_precision_score(y_true, y_proba)
-            self._plot_precision_recall_curve(precision, recall, auc_pr)
+            # Only create ROC and PR curves if we have both classes in the data
+            if len(unique_true) > 1 and len(unique_pred) > 1:
+                try:
+                    # 2. ROC Curve
+                    fpr, tpr, _ = roc_curve(y_true, y_proba)
+                    auc = roc_auc_score(y_true, y_proba)
+                    self._plot_roc_curve(fpr, tpr, auc)
+                    
+                    # 3. Precision-Recall Curve
+                    precision, recall, _ = precision_recall_curve(y_true, y_proba)
+                    auc_pr = average_precision_score(y_true, y_proba)
+                    self._plot_precision_recall_curve(precision, recall, auc_pr)
+                except Exception as curve_err:
+                    self.logger.warning(f"Error creating ROC/PR curves: {str(curve_err)}")
+                    # Create basic placeholder curves
+                    fpr, tpr = [0, 1], [0, 1]
+                    self._plot_roc_curve(fpr, tpr, 0.5)
+                    
+                    precision, recall = [0, 1], [1, 0]
+                    self._plot_precision_recall_curve(precision, recall, 0.5)
+            else:
+                self.logger.warning("Only one class present in predictions or labels. Skipping ROC/PR curves.")
+                # Create basic placeholder curves
+                fpr, tpr = [0, 1], [0, 1]
+                self._plot_roc_curve(fpr, tpr, 0.5)
+                
+                precision, recall = [0, 1], [1, 0]
+                self._plot_precision_recall_curve(precision, recall, 0.5)
             
             # 4. Feature importance (if available)
             self._plot_feature_importance_if_available(y_true, y_pred)

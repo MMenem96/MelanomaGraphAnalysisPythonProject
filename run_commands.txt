@@ -1,0 +1,4 @@
+Train & Compare: 
+python manual_run_main.py --mode train --classifiers all --bcc-dir data/bcc --sk-dir data/sk  --max-images-per-class 10
+
+Classify or predict: python manual_run_main.py --mode classify --classifiers rf --image-path path/to/image.jpg

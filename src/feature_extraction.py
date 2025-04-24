@@ -1,9 +1,10 @@
 import networkx as nx
 import numpy as np
-from scipy import linalg
-from scipy import stats
+from scipy import linalg, spatial, stats
+from scipy.sparse.linalg import eigsh
 import logging
 import pandas as pd
+from collections import defaultdict
 
 class FeatureExtractor:
     def __init__(self):
@@ -49,6 +50,88 @@ class FeatureExtractor:
             except:
                 # Fallback if convergence issues
                 features['eigenvector_centrality'] = {node: 0.5 for node in G.nodes()}
+                
+            # 6. NEW: PageRank centrality - identifies important nodes based on link structure
+            # Particularly useful for distinguishing BCC which has different growth patterns from SK
+            try:
+                features['pagerank'] = nx.pagerank(G, weight='weight')
+            except:
+                features['pagerank'] = {node: 0.5 for node in G.nodes()}
+                
+            # 7. NEW: Katz centrality - measures influence including indirect connections
+            # Captures the spreading patterns that differ between BCC and SK
+            try:
+                features['katz_centrality'] = nx.katz_centrality_numpy(G, weight='weight')
+            except:
+                features['katz_centrality'] = {node: 0.5 for node in G.nodes()}
+                
+            # 8. NEW: k-core decomposition - identifies the most connected subgraphs
+            # BCC tends to have different core structures than SK
+            k_core = nx.core_number(G)
+            features['k_core'] = k_core
+            
+            # 9. NEW: Local efficiency - measures information exchange efficiency in node neighborhoods
+            # Research shows this is highly effective for distinguishing lesion types
+            local_efficiency = {}
+            for node in G.nodes():
+                neighbors = list(G.neighbors(node))
+                if len(neighbors) >= 2:
+                    subgraph = G.subgraph(neighbors)
+                    if nx.number_of_nodes(subgraph) > 0:
+                        # Calculate local efficiency manually to handle newer NetworkX versions
+                        try:
+                            # First try using global_efficiency (current approach in newer NetworkX)
+                            local_efficiency[node] = nx.global_efficiency(subgraph)
+                        except:
+                            # Fallback to manual calculation
+                            n = nx.number_of_nodes(subgraph)
+                            if n < 2:
+                                local_efficiency[node] = 0.0
+                            else:
+                                efficiency_sum = 0.0
+                                count = 0
+                                for u in subgraph.nodes():
+                                    for v in subgraph.nodes():
+                                        if u != v:
+                                            try:
+                                                path_length = nx.shortest_path_length(subgraph, u, v, weight='weight')
+                                                if path_length > 0:
+                                                    efficiency_sum += 1.0 / path_length
+                                                count += 1
+                                            except nx.NetworkXNoPath:
+                                                # No path between u and v
+                                                pass
+                                
+                                if count > 0:
+                                    local_efficiency[node] = efficiency_sum / count
+                                else:
+                                    local_efficiency[node] = 0.0
+                    else:
+                        local_efficiency[node] = 0.0
+                else:
+                    local_efficiency[node] = 0.0
+            features['local_efficiency'] = local_efficiency
+            
+            # 10. NEW: Structural holes - identifies nodes bridging separate communities
+            # Particularly relevant for detecting border irregularities in BCC
+            structural_holes = {}
+            for node in G.nodes():
+                neighbors = list(G.neighbors(node))
+                if len(neighbors) >= 2:
+                    # Calculate constraint (inverse of structural holes)
+                    constraint = 0
+                    for i in neighbors:
+                        p_i = G[node][i].get('weight', 1.0) / sum(G[node][j].get('weight', 1.0) for j in neighbors)
+                        inner_sum = p_i
+                        for j in neighbors:
+                            if i != j and G.has_edge(i, j):
+                                p_j = G[i][j].get('weight', 1.0) / sum(G[i][k].get('weight', 1.0) for k in G.neighbors(i))
+                                inner_sum += p_i * p_j
+                        constraint += inner_sum ** 2
+                    structural_holes[node] = 1.0 - min(constraint, 1.0)  # Convert constraint to structural holes measure
+                else:
+                    structural_holes[node] = 0.0
+            features['structural_holes'] = structural_holes
 
         except Exception as e:
             self.logger.error(f"Error in local feature extraction: {str(e)}")
