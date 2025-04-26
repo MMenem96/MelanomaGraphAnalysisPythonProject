@@ -2,21 +2,21 @@ Training Summary for RF
 ==================================
 
 Performance Metrics:
-  Accuracy: 67.50%
-  AUC: 71.78%
-  Sensitivity/Recall: 67.57%
-  Specificity: 67.44%
-  Precision: 64.10%
-  F1 Score: 65.79%
-  PR-AUC: 63.09%
+  Accuracy: 73.50%
+  AUC: 82.45%
+  Sensitivity/Recall: 75.25%
+  Specificity: 71.72%
+  Precision: 73.08%
+  F1 Score: 74.15%
+  PR-AUC: 80.76%
 
 Feature Information:
   Total features: 439
-  Selected features: 110
-  Feature reduction: 74.94%
+  Selected features: 200
+  Feature reduction: 54.44%
 
 Confusion Matrix:
-  [[29 14]
-   [12 25]]
+  [[71 28]
+   [25 76]]
 
-Training completed on: 2025-04-24 03:44:42
+Training completed on: 2025-04-24 10:45:34

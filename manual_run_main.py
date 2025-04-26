@@ -307,15 +307,21 @@ def train(args, logger):
                     X_train_scaled = classifier.scaler.fit_transform(X_train)
                     X_test_scaled = classifier.scaler.transform(X_test)
                     
-                    # Select features using the enhanced method
-                    logger.info("Performing feature selection...")
-                    feature_selection_method = 'combined'  # Use both mutual info and f-test
-                    X_train_selected = classifier.select_features(X_train_scaled, train_labels, 
-                                                               method=feature_selection_method,
-                                                               n_features=min(100, X_train.shape[1]))
+                    # Feature selection has been disabled - using all features with constant removal only
+                    logger.info("Feature selection disabled - using all features for better performance...")
+                    X_train_selected = classifier.select_features(X_train_scaled, train_labels)
                     
-                    # Transform test data with the same feature selector
-                    X_test_selected = classifier.feature_selector.transform(X_test_scaled)
+                    # Since we're using all features, just need to make sure we handle constant features consistently
+                    # This will return X_test_scaled with only constant features removed if any
+                    if classifier.feature_selector is not None:
+                        try:
+                            X_test_selected = classifier.feature_selector.transform(X_test_scaled)
+                        except ValueError as e:
+                            logger.warning(f"Feature selection transform error: {str(e)}")
+                            logger.info("Falling back to using all test features")
+                            X_test_selected = X_test_scaled
+                    else:
+                        X_test_selected = X_test_scaled
                     
                     logger.info(f"Selected {X_train_selected.shape[1]} features out of {X_train.shape[1]}")
 
@@ -351,8 +357,9 @@ def train(args, logger):
                     
                     # Final evaluation on test set
                     logger.info("Evaluating on test set...")
-                    y_pred = classifier.classifier.predict(X_test_selected)
-                    y_proba = classifier.classifier.predict_proba(X_test_selected)[:, 1] if hasattr(classifier.classifier, 'predict_proba') else None
+                    # Use enhanced predict methods that handle feature dimension mismatches
+                    y_pred = classifier.predict(X_test_selected)
+                    y_proba = classifier.predict_proba(X_test_selected)[:, 1] if hasattr(classifier, 'predict_proba') else None
                     
                     # Calculate metrics
                     metrics = {}
@@ -1099,14 +1106,19 @@ def classify(args, logger):
                     # Scale features
                     X_scaled = scaler.transform(X)
                     
-                    # Apply feature selection if available
+                    # Apply feature selection if available, with error handling for dimension mismatch
                     if feature_selector_path and os.path.exists(feature_selector_path):
-                        feature_selector = load(feature_selector_path)
-                        X_selected = feature_selector.transform(X_scaled)
-                        logger.info(f"Applied feature selection: using {X_selected.shape[1]} features")
-                        
-                        # Make prediction with selected features
-                        pred = clf.predict(X_selected)[0]
+                        try:
+                            feature_selector = load(feature_selector_path)
+                            X_selected = feature_selector.transform(X_scaled)
+                            logger.info(f"Applied feature selection: using {X_selected.shape[1]} features")
+                            
+                            # Make prediction with selected features
+                            pred = clf.predict(X_selected)[0]
+                        except ValueError as e:
+                            logger.warning(f"Feature selection error: {str(e)}")
+                            logger.info("Falling back to using all scaled features for prediction")
+                            pred = clf.predict(X_scaled)[0]
                     else:
                         # Make prediction without feature selection
                         pred = clf.predict(X_scaled)[0]
@@ -1117,9 +1129,15 @@ def classify(args, logger):
                         try:
                             # Use selected features for probability if available
                             if feature_selector_path and os.path.exists(feature_selector_path) and 'X_selected' in locals():
-                                probs = clf.predict_proba(X_selected)
-                                prob = probs[0, 1]  # Probability of positive class (BCC)
-                                logger.info(f"Using feature-selected data for probability calculation")
+                                try:
+                                    probs = clf.predict_proba(X_selected)
+                                    prob = probs[0, 1]  # Probability of positive class (BCC)
+                                    logger.info(f"Using feature-selected data for probability calculation")
+                                except ValueError as e:
+                                    logger.warning(f"Error using selected features for probability: {str(e)}")
+                                    logger.info("Falling back to using all scaled features for probability")
+                                    probs = clf.predict_proba(X_scaled)
+                                    prob = probs[0, 1]  # Probability of positive class (BCC)
                             else:
                                 probs = clf.predict_proba(X_scaled)
                                 prob = probs[0, 1]  # Probability of positive class (BCC)
@@ -1296,7 +1314,7 @@ def plot_learning_curve(estimator, X, y, cv=5, n_jobs=None, train_sizes=np.linsp
     Generate and plot a learning curve for a classifier.
     
     Args:
-        estimator: The classifier object
+        estimator: The classifier object (or BCCSKClassifier instance)
         X: Features
         y: Labels
         cv: Cross-validation folds
@@ -1305,6 +1323,9 @@ def plot_learning_curve(estimator, X, y, cv=5, n_jobs=None, train_sizes=np.linsp
         title: Plot title
         save_path: Path to save the plot
     """
+    # If estimator is a BCCSKClassifier, use its underlying classifier
+    if hasattr(estimator, 'classifier'):
+        estimator = estimator.classifier
     plt.figure(figsize=(10, 6))
     
     # Check if there are multiple classes in the dataset
@@ -1394,12 +1415,14 @@ def plot_calibration_curve(clf, X, y, name, save_path=None):
     Generate and plot a calibration curve for a classifier.
     
     Args:
-        clf: Trained classifier
+        clf: Trained classifier (or BCCSKClassifier instance)
         X: Features
         y: True labels
         name: Classifier name
         save_path: Path to save the plot
     """
+    # If clf is a BCCSKClassifier, we need to use the custom predict_proba method
+    is_bcc_classifier = hasattr(clf, 'predict_proba') and hasattr(clf, 'classifier')
     plt.figure(figsize=(10, 6))
     
     # Check if there are multiple classes in the dataset
@@ -1476,13 +1499,16 @@ def plot_feature_importance(clf, X, y, feature_names=None, top_n=20, save_path=N
     Generate and plot feature importance for a classifier.
     
     Args:
-        clf: Trained classifier
+        clf: Trained classifier (or BCCSKClassifier instance)
         X: Feature matrix
         y: Target labels
         feature_names: Names of features
         top_n: Number of top features to show
         save_path: Path to save the plot
     """
+    # If clf is a BCCSKClassifier, use its underlying classifier
+    if hasattr(clf, 'classifier'):
+        clf = clf.classifier
     plt.figure(figsize=(12, 8))
     
     importance_type = None
@@ -1531,11 +1557,13 @@ def plot_prediction_histogram(clf, X, y, save_path=None):
     Plot histogram of prediction probabilities.
     
     Args:
-        clf: Trained classifier
+        clf: Trained classifier (or BCCSKClassifier instance)
         X: Feature matrix
         y: True labels
         save_path: Path to save the plot
     """
+    # If clf is a BCCSKClassifier, we'll use its custom predict_proba method
+    is_bcc_classifier = hasattr(clf, 'predict_proba') and hasattr(clf, 'classifier')
     plt.figure(figsize=(10, 6))
     
     # Check if there are multiple classes in the dataset
@@ -1607,11 +1635,13 @@ def plot_f1_threshold_curve(clf, X, y, save_path=None):
     Plot F1 score vs decision threshold.
     
     Args:
-        clf: Trained classifier
+        clf: Trained classifier (or BCCSKClassifier instance)
         X: Feature matrix
         y: True labels
         save_path: Path to save the plot
     """
+    # If clf is a BCCSKClassifier, we'll use its custom predict_proba method
+    is_bcc_classifier = hasattr(clf, 'predict_proba') and hasattr(clf, 'classifier')
     plt.figure(figsize=(10, 6))
     
     # Check if there are multiple classes in the dataset

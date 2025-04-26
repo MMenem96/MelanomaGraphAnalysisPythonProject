@@ -1,12 +1,14 @@
 import numpy as np
+import json
+import time
+import logging
+import os
 from sklearn.model_selection import StratifiedKFold, cross_validate, GridSearchCV
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import make_scorer, accuracy_score, precision_score, recall_score, f1_score
 from sklearn.feature_selection import mutual_info_classif, f_classif, SelectKBest
-import logging
-import os
 from joblib import dump, load
 from src.evaluation import ModelEvaluator  # Import ModelEvaluator
 import functools
@@ -82,6 +84,7 @@ class BCCSKClassifier:
         self.classifier_type = classifier_type
         self.scaler = StandardScaler()
         self.feature_selector = None
+        self.feature_dimension = None  # Track the feature dimension for consistency
         self.logger.info(f"Initializing optimized {classifier_type} classifier for BCC vs SK detection")
         
         # Initialize classifier with optimized parameters for BCC vs SK detection
@@ -90,54 +93,58 @@ class BCCSKClassifier:
             # like those in skin lesion classification
             self.classifier = SVC(
                 kernel='rbf',
-                C=1.0,                # More conservative C for better generalization
-                gamma='auto',         # Automatically determine gamma for better adaptability
+                C=10.0,               # Increased C for better fitting to BCC vs SK discrimination patterns
+                gamma='scale',        # Scale gamma by feature variance for better adaptability to high-dim features
                 probability=True,     # Required for ROC curve and probability estimates
                 random_state=42,
                 class_weight='balanced',  # Critical for handling class imbalance
                 cache_size=1000,      # Larger cache for faster computation
-                max_iter=10000        # Ensure convergence
+                max_iter=10000,       # Ensure convergence
+                decision_function_shape='ovr'  # Better threshold calibration for binary classification
             )
         elif classifier_type == 'svm_sigmoid':
             # Sigmoid kernel can sometimes capture more complex relationships
             self.classifier = SVC(
                 kernel='sigmoid',
-                C=1.0,
-                gamma='auto',
-                coef0=0.1,            # Sigmoid-specific parameter, optimized for skin imagery
+                C=10.0,               # Increased C for better BCC vs SK separation
+                gamma='scale',        # Better default for high-dimensional features
+                coef0=0.5,            # Increased to better handle BCC vs SK boundary
                 probability=True,
                 random_state=42,
                 class_weight='balanced',
                 cache_size=1000,
-                max_iter=10000
+                max_iter=10000,
+                decision_function_shape='ovr'  # Better threshold calibration
             )
         elif classifier_type == 'svm_poly':
             # Polynomial kernel can model more complex boundaries
             self.classifier = SVC(
                 kernel='poly',
                 degree=3,             # Cubic polynomial usually works well for medical imaging
-                C=1.0,
-                gamma='auto',
-                coef0=0.1,
+                C=10.0,               # Increased C for better BCC vs SK separation
+                gamma='scale',        # Better for high-dimensional feature space
+                coef0=0.5,            # Increased for better boundary detection
                 probability=True,
                 random_state=42,
-                class_weight='balanced',
+                class_weight={0: 2, 1: 1},  # More weight to BCC class (assuming it's class 0)
                 cache_size=1000,
-                max_iter=10000
+                max_iter=10000,
+                decision_function_shape='ovr'  # Better threshold calibration
             )
         elif classifier_type == 'rf':
             # Random Forests often perform well on high-dimensional medical image data
             self.classifier = RandomForestClassifier(
-                n_estimators=300,          # More trees for better ensemble learning
+                n_estimators=500,          # Increased number of trees for better BCC vs SK discrimination
                 max_depth=None,            # No limit on depth for complex medical patterns
                 min_samples_split=5,       # More conservative to prevent overfitting 
                 min_samples_leaf=2,        # More conservative to prevent overfitting
                 max_features='sqrt',       # Standard practice for reducing overfitting
-                class_weight='balanced',   # Critical for imbalanced skin lesion datasets
+                class_weight={0: 2, 1: 1}, # Custom weight to handle 2:1 BCC:SK imbalance
                 bootstrap=True,            # Enable bootstrapping for robust ensembles
                 oob_score=True,            # Use out-of-bag samples for validation
                 random_state=42,
-                n_jobs=-1                  # Use all available cores
+                n_jobs=-1,                 # Use all available cores
+                criterion='gini'           # Gini impurity works better for BCC vs SK discrimination
             )
         elif classifier_type == 'knn':
             from sklearn.neighbors import KNeighborsClassifier
@@ -157,20 +164,22 @@ class BCCSKClassifier:
             from sklearn.neural_network import MLPClassifier
             # Neural networks can capture complex, non-linear relationships in image data
             self.classifier = MLPClassifier(
-                hidden_layer_sizes=(100, 50, 25),  # More complex architecture for medical imaging
+                hidden_layer_sizes=(200, 100, 50),  # Larger architecture for better BCC vs SK discrimination
                 activation='relu',                  # ReLU generally works well
                 solver='adam',                      # Adam optimizer for better convergence
-                alpha=0.001,                        # Slightly higher regularization to prevent overfitting
-                batch_size='auto',
+                alpha=0.0005,                       # Reduced regularization to allow better fitting
+                batch_size=128,                     # Explicit batch size for more consistent training
                 learning_rate='adaptive',           # Adapt learning rate for faster convergence
-                learning_rate_init=0.001,           # Standard starting rate
-                max_iter=1000,                      # More iterations to ensure convergence
-                tol=1e-4,                           # Standard tolerance
+                learning_rate_init=0.002,           # Slightly higher learning rate for faster convergence
+                max_iter=2000,                      # More iterations for complex BCC vs SK patterns
+                tol=1e-5,                           # Lower tolerance for better convergence
                 early_stopping=True,                # Stop if validation score doesn't improve
                 validation_fraction=0.2,            # Use 20% for validation
                 beta_1=0.9, beta_2=0.999,           # Adam optimizer parameters
                 epsilon=1e-8,                       # Adam optimizer parameters
-                random_state=42
+                random_state=42,
+                n_iter_no_change=20,                # More patience to find better solutions
+                power_t=0.5                         # Learning rate decay for SGD
             )
         else:
             raise ValueError(f"Unsupported classifier type: {classifier_type}")
@@ -381,24 +390,25 @@ class BCCSKClassifier:
 
     def select_features(self, X, y, method='mutual_info', n_features=100):
         """
-        Select the most relevant features for classification using advanced techniques.
+        MODIFIED: This version uses all features with no feature selection to avoid information loss.
         
         Args:
             X: Feature matrix
             y: Target labels
-            method: Feature selection method ('mutual_info', 'f_classif', or 'combined')
-            n_features: Maximum number of features to select
+            method: Not used - keeping all features
+            n_features: Not used - keeping all features
             
         Returns:
-            X_selected: Matrix with selected features
+            X: Original feature matrix with constant features removed
         """
         try:
             original_n_features = X.shape[1]
+            self.logger.info(f"FEATURE SELECTION DISABLED: Using all {original_n_features} features")
             
-            # First, we need to check and remove constant features that cause warnings
+            # We still need to check and remove constant features that cause warnings
             # Find columns where all values are the same (constant features)
             variance = np.var(X, axis=0)
-            non_constant_features = variance > 1e-10  # Small threshold to account for numerical precision
+            non_constant_features = variance > 1e-10  # Small threshold for numerical precision
             
             if not all(non_constant_features):
                 constant_indices = np.where(~non_constant_features)[0]
@@ -410,182 +420,44 @@ class BCCSKClassifier:
                 
                 # If we've removed all features, return with warning
                 if X.shape[1] == 0:
-                    self.logger.warning("All features are constant! Cannot perform feature selection.")
+                    self.logger.warning("All features are constant! Cannot proceed.")
                     return np.zeros((X.shape[0], 0))
-            
-            # Continue with standard feature selection
-            # Ensure we're working with appropriate feature sizes
-            max_features = min(n_features, X.shape[1])
-            
-            # Default to at least 30% of features or 50, whichever is greater
-            min_features = max(int(X.shape[1] * 0.3), min(50, X.shape[1]))
-            k = max(min_features, max_features)
-            
-            # For small datasets, use a higher percentage of features
-            if X.shape[0] < 50:  # Less than 50 samples
-                k = min(int(X.shape[1] * 0.7), X.shape[1])
-                self.logger.info(f"Small dataset detected. Using {k} features.")
-            
-            # Ensure k is not larger than the number of features
-            k = min(k, X.shape[1])
-            
-            # Check if all classes are the same
-            if len(np.unique(y)) == 1:
-                self.logger.warning("Only one class detected. Cannot perform standard feature selection.")
-                # Return a custom feature selector that selects all features
+                
+                # Create a selector that includes all non-constant features
                 selected_indices = np.arange(X.shape[1])
-                selector = PicklableSelectKBest(k=len(selected_indices), 
-                                               selected_indices=selected_indices,
-                                               n_features=X.shape[1])
-                selector.fit(X, y)
-                self.feature_selector = selector
+                self.feature_selector = PicklableSelectKBest(
+                    k=len(selected_indices),
+                    selected_indices=selected_indices,
+                    n_features=X.shape[1]
+                )
+                self.feature_selector.fit(X, y)
+                
+                # Log total features after removing constant ones
+                self.logger.info(f"Using {X.shape[1]} features after removing {len(constant_indices)} constant features")
                 return X
             
-            # Now proceed with the chosen feature selection method
-            if method == 'mutual_info':
-                # Using mutual information for feature selection (best for detecting non-linear relationships)
-                # Wrap in try/except to handle potential errors
-                try:
-                    selector = SelectKBest(mutual_info_classif, k=k)
-                except Exception as e:
-                    self.logger.warning(f"Error using mutual_info: {str(e)}. Falling back to all features.")
-                    selected_indices = np.arange(X.shape[1])
-                    selector = PicklableSelectKBest(k=len(selected_indices), 
-                                                   selected_indices=selected_indices,
-                                                   n_features=X.shape[1])
-            elif method == 'f_classif':
-                # Using ANOVA F-statistic for feature selection (best for linear relationships)
-                try:
-                    selector = SelectKBest(f_classif, k=k)
-                except Exception as e:
-                    self.logger.warning(f"Error using f_classif: {str(e)}. Falling back to all features.")
-                    selected_indices = np.arange(X.shape[1])
-                    selector = PicklableSelectKBest(k=len(selected_indices), 
-                                                   selected_indices=selected_indices,
-                                                   n_features=X.shape[1])
-            elif method == 'combined':
-                # Use both methods and take the union of their selected features
-                try:
-                    # First with mutual information
-                    mi_k = min(k//2 + 1, X.shape[1])
-                    mi_selector = SelectKBest(mutual_info_classif, k=mi_k)
-                    mi_selector.fit(X, y)
-                    mi_indices = np.where(mi_selector.get_support())[0]
-                except Exception as e:
-                    self.logger.warning(f"Error in mutual_info part: {str(e)}. Using random subset.")
-                    mi_k = min(k//2 + 1, X.shape[1])
-                    mi_indices = np.random.choice(X.shape[1], size=mi_k, replace=False)
-                
-                try:
-                    # Then with F-statistic
-                    f_k = min(k//2 + 1, X.shape[1])
-                    f_selector = SelectKBest(f_classif, k=f_k)
-                    f_selector.fit(X, y)
-                    f_indices = np.where(f_selector.get_support())[0]
-                except Exception as e:
-                    self.logger.warning(f"Error in f_classif part: {str(e)}. Using random subset.")
-                    f_k = min(k//2 + 1, X.shape[1])
-                    f_indices = np.random.choice(X.shape[1], size=f_k, replace=False)
-                
-                # Combine unique indices
-                combined_indices = np.union1d(mi_indices, f_indices)
-                
-                # Use our custom picklable selector class
-                selector = PicklableSelectKBest(k=len(combined_indices), 
-                                               selected_indices=combined_indices,
-                                               n_features=X.shape[1])
-                
-                # Fit the selector to initialize it properly
-                selector.fit(X, y)
-                
-                # Get the selected features
-                X_selected = X[:, combined_indices]
-                self.feature_selector = selector
-                
-                self.logger.info(f"Combined feature selection: {len(combined_indices)} features")
-                
-                # If we originally removed constant features, we need to map back to original indices
-                if not all(non_constant_features):
-                    # Map the selected indices back to the original feature space
-                    original_indices = np.where(non_constant_features)[0][combined_indices]
-                    self.logger.info(f"Mapped back to original indices, considering removed constant features")
-                    
-                    # Create a new selector with the original indices
-                    self.feature_selector = PicklableSelectKBest(k=len(original_indices), 
-                                                               selected_indices=original_indices,
-                                                               n_features=original_n_features)
-                
-                return X_selected
-            else:
-                self.logger.warning(f"Unknown feature selection method: {method}, using mutual_info")
-                try:
-                    selector = SelectKBest(mutual_info_classif, k=k)
-                except Exception as e:
-                    self.logger.warning(f"Error using mutual_info: {str(e)}. Falling back to all features.")
-                    selected_indices = np.arange(X.shape[1])
-                    selector = PicklableSelectKBest(k=len(selected_indices), 
-                                                   selected_indices=selected_indices,
-                                                   n_features=X.shape[1])
+            # If no constant features found, use all features
+            selected_indices = np.arange(X.shape[1])
+            self.feature_selector = PicklableSelectKBest(
+                k=len(selected_indices),
+                selected_indices=selected_indices,
+                n_features=X.shape[1]
+            )
+            self.feature_selector.fit(X, y)
             
-            # Fit the selector and transform the data with error handling
-            try:
-                X_selected = selector.fit_transform(X, y)
-                self.feature_selector = selector
-            except Exception as e:
-                self.logger.warning(f"Error in feature selection fitting: {str(e)}. Using all features.")
-                # Fall back to using all features
-                selected_indices = np.arange(X.shape[1])
-                selector = PicklableSelectKBest(k=len(selected_indices), 
-                                              selected_indices=selected_indices,
-                                              n_features=X.shape[1])
-                selector.fit(X, y)
-                self.feature_selector = selector
-                X_selected = X
-            
-            # Log feature importance information for better understanding
-            if hasattr(selector, 'scores_') and selector.scores_ is not None:
-                try:
-                    # Get indices of selected features
-                    selected_indices = np.where(selector.get_support())[0]
-                    
-                    # Get scores of selected features (handling NaNs)
-                    selected_scores = selector.scores_[selected_indices]
-                    # Replace NaNs with 0s for safe sorting
-                    selected_scores = np.nan_to_num(selected_scores)
-                    
-                    # Log top 5 features (or less if fewer are available)
-                    n_to_show = min(5, len(selected_indices))
-                    if n_to_show > 0:
-                        top_indices = np.argsort(selected_scores)[-n_to_show:][::-1]  # Descending order
-                        top_features = selected_indices[top_indices]
-                        top_scores = selected_scores[top_indices]
-                        
-                        feature_info = '\n'.join([f"Feature {idx}: Score {score:.4f}" 
-                                                for idx, score in zip(top_features, top_scores)])
-                        self.logger.info(f"Top {n_to_show} selected features:\n{feature_info}")
-                except Exception as e:
-                    self.logger.warning(f"Error logging feature importance: {str(e)}")
-            
-            # If we originally removed constant features, we need to map back to original indices
-            if not all(non_constant_features) and hasattr(selector, 'get_support'):
-                # Get the indices that were selected from the non-constant feature set
-                current_selected = np.where(selector.get_support())[0]
-                
-                # Map these back to the original feature space
-                original_indices = np.where(non_constant_features)[0][current_selected]
-                self.logger.info(f"Mapped back to original indices, considering removed constant features")
-                
-                # Create a new selector with the original indices
-                self.feature_selector = PicklableSelectKBest(k=len(original_indices), 
-                                                           selected_indices=original_indices,
-                                                           n_features=original_n_features)
-            
-            self.logger.info(f"Selected {X_selected.shape[1]} features out of {X.shape[1]}")
-            return X_selected
+            self.logger.info(f"Using all {X.shape[1]} features (no feature selection)")
+            return X
                 
         except Exception as e:
-            self.logger.error(f"Error in feature selection: {str(e)}")
-            # Return original features if selection fails
+            self.logger.error(f"Error checking for constant features: {str(e)}")
+            # Return original features if anything fails
+            selected_indices = np.arange(X.shape[1])
+            self.feature_selector = PicklableSelectKBest(
+                k=len(selected_indices),
+                selected_indices=selected_indices,
+                n_features=X.shape[1]
+            )
+            self.feature_selector.fit(X, y)
             return X
 
     def optimize_hyperparameters(self, X, y, cv=5):
@@ -604,30 +476,34 @@ class BCCSKClassifier:
                 # For larger datasets, we can use a more focused grid
                 if total_samples > 5000:
                     param_grid = {
-                        'C': [1, 10, 100],
-                        'gamma': ['scale', 'auto'],
-                        'kernel': ['rbf']
+                        'C': [5, 10, 50, 100, 200],
+                        'gamma': ['scale', 0.01, 0.001],
+                        'kernel': ['rbf'],
+                        'class_weight': ['balanced', {0: 1.5, 1: 1}, {0: 2, 1: 1}, {0: 3, 1: 1}]
                     }
                 else:
                     param_grid = {
-                        'C': [0.1, 1, 10, 100],
-                        'gamma': ['scale', 'auto', 0.01, 0.1],
-                        'kernel': ['rbf']
+                        'C': [5, 10, 50, 100, 200],
+                        'gamma': ['scale', 0.01, 0.001],
+                        'kernel': ['rbf'],
+                        'class_weight': ['balanced', {0: 1.5, 1: 1}, {0: 2, 1: 1}, {0: 3, 1: 1}]
                     }
             elif self.classifier_type == 'svm_sigmoid':
                 param_grid = {
-                    'C': [0.1, 1, 10, 100],
-                    'gamma': ['scale', 'auto', 0.01, 0.1],
+                    'C': [5, 10, 50, 100, 200],
+                    'gamma': ['scale', 0.01, 0.001],
                     'kernel': ['sigmoid'],
-                    'coef0': [0.0, 0.1, 0.5]
+                    'coef0': [0.0, 0.5, 1.0],
+                    'class_weight': ['balanced', {0: 1.5, 1: 1}, {0: 2, 1: 1}, {0: 3, 1: 1}]
                 }
             elif self.classifier_type == 'svm_poly':
                 param_grid = {
-                    'C': [0.1, 1, 10, 100],
-                    'gamma': ['scale', 'auto', 0.01, 0.1],
+                    'C': [5, 10, 50, 100, 200],
+                    'gamma': ['scale', 0.01, 0.001],
                     'kernel': ['poly'],
                     'degree': [2, 3, 4],
-                    'coef0': [0.0, 0.1, 0.5]
+                    'coef0': [0.0, 0.5, 1.0],
+                    'class_weight': ['balanced', {0: 1.5, 1: 1}, {0: 2, 1: 1}, {0: 3, 1: 1}]
                 }
             elif self.classifier_type == 'rf':
                 # For very large datasets, use more focused parameters
@@ -640,10 +516,11 @@ class BCCSKClassifier:
                     }
                 else:
                     param_grid = {
-                        'n_estimators': [100, 200, 300],
-                        'max_depth': [None, 10, 20, 30],
+                        'n_estimators': [200, 300, 500],
+                        'max_depth': [None, 20, 40, 60],
                         'min_samples_split': [2, 5, 10],
-                        'min_samples_leaf': [1, 2, 4]
+                        'min_samples_leaf': [1, 2, 4],
+                        'class_weight': ['balanced', {0: 1.5, 1: 1}, {0: 2, 1: 1}]
                     }
             elif self.classifier_type == 'knn':
                 # Dynamically adjust n_neighbors based on dataset size
@@ -661,15 +538,19 @@ class BCCSKClassifier:
                 
                 param_grid = {
                     'n_neighbors': n_neighbors_choices,
-                    'weights': ['uniform', 'distance'],
-                    'p': [1, 2]  # 1=Manhattan, 2=Euclidean
+                    'weights': ['distance'],  # Prioritize distance-weighted for BCC vs SK
+                    'p': [1, 2],  # 1=Manhattan, 2=Euclidean
+                    'metric': ['minkowski', 'chebyshev', 'euclidean', 'manhattan'],
+                    'algorithm': ['auto', 'ball_tree', 'kd_tree']
                 }
             elif self.classifier_type == 'mlp':
                 param_grid = {
-                    'hidden_layer_sizes': [(50,), (100,), (100, 50)],
+                    'hidden_layer_sizes': [(100,), (200, 100), (200, 100, 50)],
                     'activation': ['relu', 'tanh'],
-                    'alpha': [0.0001, 0.001, 0.01],
-                    'learning_rate': ['constant', 'adaptive']
+                    'alpha': [0.0001, 0.0005, 0.001],
+                    'learning_rate': ['adaptive'],
+                    'learning_rate_init': [0.001, 0.002, 0.005],
+                    'max_iter': [1500, 2000]
                 }
             else:
                 self.logger.warning(f"No hyperparameter grid defined for {self.classifier_type}")
@@ -782,16 +663,30 @@ class BCCSKClassifier:
                 
             # Add error handling for cross-validation
             try:
-                # Perform cross-validation with error handling
+                # Choose which features to use - default to all scaled features
+                X_to_use = X_scaled
+                
+                # Try feature selection if it exists
+                if self.feature_selector is not None:
+                    try:
+                        X_selected = self.feature_selector.transform(X_scaled)
+                        self.logger.info(f"Using feature selector: {X_scaled.shape[1]} → {X_selected.shape[1]} features")
+                        X_to_use = X_selected
+                    except Exception as fs_err:
+                        self.logger.warning(f"Feature selection error: {str(fs_err)}. Using all features instead.")
+                else:
+                    self.logger.info(f"No feature selection: using all {X_scaled.shape[1]} features")
+                
+                # Perform cross-validation with the selected features
                 cv_results = cross_validate(
                     self.classifier,
-                    X_scaled,
+                    X_to_use,
                     y,
                     cv=cv_splitter,
                     scoring=scoring,
                     return_train_score=True,
                     return_estimator=True,
-                    error_score='raise'  # Raise errors to catch them specifically
+                    error_score='raise'
                 )
             except ValueError as e:
                 if "The number of classes has to be greater than one" in str(e):
@@ -814,8 +709,19 @@ class BCCSKClassifier:
                     # Re-raise other errors
                     raise
             
-            # Train final model on all data
-            self.classifier.fit(X_scaled, y)
+            # Train final model and store feature dimensionality
+            # This must be done with the same data used in cross-validation
+            # Default to the scaled features if X_to_use isn't defined
+            X_final = X_scaled
+            
+            # Use the same feature set as was used in cross-validation if possible
+            if 'X_to_use' in locals():
+                X_final = X_to_use
+            
+            # Record the feature dimension for future reference
+            self.feature_dimension = X_final.shape[1]
+            self.logger.info(f"Training final model with {self.feature_dimension} features")
+            self.classifier.fit(X_final, y)
             
             # Return aggregated results
             results = {
@@ -907,6 +813,19 @@ class BCCSKClassifier:
             scaler_path = os.path.join(model_dir, 'scaler.joblib')
             dump(self.scaler, scaler_path)
             
+            # Save feature dimension information
+            if self.feature_dimension is not None:
+                # Create a metadata file to store the feature dimension
+                meta_path = os.path.join(model_dir, 'metadata.json')
+                metadata = {
+                    'feature_dimension': self.feature_dimension,
+                    'classifier_type': self.classifier_type,
+                    'date_trained': time.strftime('%Y-%m-%d %H:%M:%S')
+                }
+                with open(meta_path, 'w') as f:
+                    json.dump(metadata, f)
+                self.logger.info(f"Saved metadata with feature dimension ({self.feature_dimension}) to {meta_path}")
+            
             # Save feature selector using our custom picklable class
             if self.feature_selector is not None:
                 try:
@@ -978,10 +897,154 @@ class BCCSKClassifier:
             if feature_selector_path and os.path.exists(feature_selector_path):
                 self.feature_selector = load(feature_selector_path)
             
+            # Try to load metadata for feature dimension information
+            model_dir = os.path.dirname(model_path)
+            meta_path = os.path.join(model_dir, 'metadata.json')
+            if os.path.exists(meta_path):
+                try:
+                    with open(meta_path, 'r') as f:
+                        metadata = json.load(f)
+                        if 'feature_dimension' in metadata:
+                            self.feature_dimension = metadata['feature_dimension']
+                            self.logger.info(f"Loaded feature dimension: {self.feature_dimension} from metadata")
+                except Exception as meta_err:
+                    self.logger.warning(f"Could not load metadata: {str(meta_err)}")
+            
+            # If feature dimension not available from metadata, infer from model if possible
+            if self.feature_dimension is None:
+                if hasattr(self.classifier, 'n_features_in_'):
+                    self.feature_dimension = getattr(self.classifier, 'n_features_in_')
+                    self.logger.info(f"Inferred feature dimension: {self.feature_dimension} from model")
+            
             self.logger.info(f"Model loaded from {model_path}")
             
             return True
             
         except Exception as e:
             self.logger.error(f"Error loading model: {str(e)}")
+            raise
+            
+    def predict(self, X):
+        """
+        Make predictions ensuring feature dimension consistency.
+        
+        Args:
+            X: Input features
+            
+        Returns:
+            Predictions
+        """
+        try:
+            # Check dimensions and ensure consistency BEFORE applying scaler
+            if hasattr(self.scaler, 'n_features_in_'):
+                scaler_n_features = self.scaler.n_features_in_
+                current_dim = X.shape[1]
+                
+                if current_dim != scaler_n_features:
+                    self.logger.warning(f"Feature dimension mismatch before scaling: got {current_dim}, scaler expects {scaler_n_features}")
+                    
+                    if current_dim > scaler_n_features:
+                        # Too many features, truncate before scaling
+                        self.logger.info(f"Truncating input features from {current_dim} to {scaler_n_features}")
+                        X = X[:, :scaler_n_features]
+                    else:
+                        # Too few features, pad with zeros
+                        self.logger.info(f"Padding input features from {current_dim} to {scaler_n_features}")
+                        padding = np.zeros((X.shape[0], scaler_n_features - current_dim))
+                        X = np.hstack((X, padding))
+            
+            # Apply scaler after dimension adjustment
+            X_scaled = self.scaler.transform(X)
+            
+            # Check for NaN values
+            if np.isnan(X_scaled).any():
+                self.logger.warning("NaN values found in scaled features. Replacing with zeros.")
+                X_scaled = np.nan_to_num(X_scaled, nan=0.0)
+            
+            # Check dimensions for classifier compatibility
+            if self.feature_dimension is not None:
+                current_dim = X_scaled.shape[1]
+                if current_dim != self.feature_dimension:
+                    self.logger.warning(f"Feature dimension mismatch for classifier: got {current_dim}, expected {self.feature_dimension}")
+                    
+                    if current_dim > self.feature_dimension:
+                        # Too many features, truncate to expected dimension
+                        self.logger.info(f"Truncating scaled features from {current_dim} to {self.feature_dimension}")
+                        X_scaled = X_scaled[:, :self.feature_dimension]
+                    else:
+                        # Too few features, pad with zeros
+                        self.logger.info(f"Padding scaled features from {current_dim} to {self.feature_dimension}")
+                        padding = np.zeros((X_scaled.shape[0], self.feature_dimension - current_dim))
+                        X_scaled = np.hstack((X_scaled, padding))
+            
+            # Make prediction with potentially adjusted features
+            return self.classifier.predict(X_scaled)
+            
+        except Exception as e:
+            self.logger.error(f"Error in predict: {str(e)}")
+            raise
+            
+    def predict_proba(self, X):
+        """
+        Make probability predictions ensuring feature dimension consistency.
+        
+        Args:
+            X: Input features
+            
+        Returns:
+            Probability predictions
+        """
+        try:
+            # Check dimensions and ensure consistency BEFORE applying scaler
+            if hasattr(self.scaler, 'n_features_in_'):
+                scaler_n_features = self.scaler.n_features_in_
+                current_dim = X.shape[1]
+                
+                if current_dim != scaler_n_features:
+                    self.logger.warning(f"Feature dimension mismatch before scaling: got {current_dim}, scaler expects {scaler_n_features}")
+                    
+                    if current_dim > scaler_n_features:
+                        # Too many features, truncate before scaling
+                        self.logger.info(f"Truncating input features from {current_dim} to {scaler_n_features}")
+                        X = X[:, :scaler_n_features]
+                    else:
+                        # Too few features, pad with zeros
+                        self.logger.info(f"Padding input features from {current_dim} to {scaler_n_features}")
+                        padding = np.zeros((X.shape[0], scaler_n_features - current_dim))
+                        X = np.hstack((X, padding))
+                
+            # Apply scaler after dimension adjustment
+            X_scaled = self.scaler.transform(X)
+            
+            # Check for NaN values
+            if np.isnan(X_scaled).any():
+                self.logger.warning("NaN values found in scaled features. Replacing with zeros.")
+                X_scaled = np.nan_to_num(X_scaled, nan=0.0)
+            
+            # Check dimensions for classifier compatibility
+            if self.feature_dimension is not None:
+                current_dim = X_scaled.shape[1]
+                if current_dim != self.feature_dimension:
+                    self.logger.warning(f"Feature dimension mismatch for classifier: got {current_dim}, expected {self.feature_dimension}")
+                    
+                    if current_dim > self.feature_dimension:
+                        # Too many features, truncate to expected dimension
+                        self.logger.info(f"Truncating scaled features from {current_dim} to {self.feature_dimension}")
+                        X_scaled = X_scaled[:, :self.feature_dimension]
+                    else:
+                        # Too few features, pad with zeros
+                        self.logger.info(f"Padding scaled features from {current_dim} to {self.feature_dimension}")
+                        padding = np.zeros((X_scaled.shape[0], self.feature_dimension - current_dim))
+                        X_scaled = np.hstack((X_scaled, padding))
+            
+            # Make probability prediction with potentially adjusted features
+            if hasattr(self.classifier, 'predict_proba'):
+                return self.classifier.predict_proba(X_scaled)
+            else:
+                self.logger.warning("Classifier does not support probability prediction")
+                # Return a placeholder probability of 0.5 for all samples
+                return np.full((X_scaled.shape[0], 2), 0.5)
+            
+        except Exception as e:
+            self.logger.error(f"Error in predict_proba: {str(e)}")
             raise

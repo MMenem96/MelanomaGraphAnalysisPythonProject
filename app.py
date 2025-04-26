@@ -115,6 +115,7 @@ def analyze():
         graph_constructor = GraphConstructor(connectivity_threshold=0.5)
         feature_extractor = FeatureExtractor()
         conv_feature_extractor = ConventionalFeatureExtractor()
+        from src.classifier import BCCSKClassifier
         classifier = BCCSKClassifier(classifier_type=actual_classifier_type)
         image_validator = ImageValidator()
         visualizer = Visualizer()
@@ -205,34 +206,23 @@ def analyze():
                     flash("No trained models found. Please train the models first.", "warning")
                     return redirect(url_for('train'))
             
-            # Load model and scaler
-            model = load(model_path)
-            scaler = load(scaler_path)
+            # Create BCCSKClassifier instance
+            from src.classifier import BCCSKClassifier
+            bcc_classifier = BCCSKClassifier(classifier_type=classifier_type)
             
-            app.logger.info(f"Using model: {model_path}")
+            app.logger.info(f"Loading model from: {model_path}")
             
-            # Check if feature selector exists and load it
-            feature_selector = None
-            if os.path.exists(feature_selector_path):
-                app.logger.info(f"Using feature selector: {feature_selector_path}")
-                feature_selector = load(feature_selector_path)
+            # Load model, scaler, and feature selector (if available)
+            bcc_classifier.load_model(model_path, scaler_path, feature_selector_path if os.path.exists(feature_selector_path) else None)
             
             # Prepare features for prediction
             X = classifier.prepare_features([G])
-            X_scaled = scaler.transform(X)
             
-            # Apply feature selection if available
-            if feature_selector is not None:
-                X_selected = feature_selector.transform(X_scaled)
-                app.logger.info(f"Feature selection applied: {X.shape[1]} features reduced to {X_selected.shape[1]}")
-                
-                # Make prediction with selected features
-                prediction = model.predict(X_selected)[0]
-                probability = model.predict_proba(X_selected)[0][1] if hasattr(model, 'predict_proba') else 0.5
-            else:
-                # Make prediction without feature selection
-                prediction = model.predict(X_scaled)[0]
-                probability = model.predict_proba(X_scaled)[0][1] if hasattr(model, 'predict_proba') else 0.5
+            # Make prediction using the enhanced classifier that handles feature dimensions consistently
+            prediction = bcc_classifier.predict(X)[0]
+            probability = bcc_classifier.predict_proba(X)[0][1]
+            
+            app.logger.info(f"Prediction: {prediction}, Probability: {probability:.4f}")
             
             prediction_label = "Basal-cell Carcinoma (BCC)" if prediction == 1 else "Seborrheic Keratosis (SK)"
             probability_pct = probability * 100
@@ -266,7 +256,7 @@ def analyze():
                 'explanation': explanation,
                 'validation_message': validation_message,
                 'features_extracted': len(X[0]),
-                'features_selected': X_selected.shape[1] if feature_selector is not None else None
+                'features_used': bcc_classifier.feature_dimension if bcc_classifier.feature_dimension else len(X[0])
             }
             
             # In a real app, you'd store this in a database
@@ -306,6 +296,7 @@ def api_predict():
         graph_constructor = GraphConstructor(connectivity_threshold=0.5)
         feature_extractor = FeatureExtractor()
         conv_feature_extractor = ConventionalFeatureExtractor()
+        from src.classifier import BCCSKClassifier
         classifier = BCCSKClassifier(classifier_type='svm')
         image_validator = ImageValidator()
 
@@ -384,35 +375,23 @@ def api_predict():
             if not os.path.exists(model_path) or not os.path.exists(scaler_path):
                 return jsonify({"error": "Model not found. Train the model first."}), 500
 
-        model = load(model_path)
-        scaler = load(scaler_path)
+        # Create BCCSKClassifier instance
+        from src.classifier import BCCSKClassifier
+        bcc_classifier = BCCSKClassifier(classifier_type=classifier_type)
         
-        # Load feature selector if it exists
-        feature_selector = None
-        if os.path.exists(feature_selector_path):
-            feature_selector = load(feature_selector_path)
-
+        app.logger.info(f"Loading model from: {model_path}")
+        
+        # Load model, scaler, and feature selector (if available)
+        bcc_classifier.load_model(model_path, scaler_path, feature_selector_path if os.path.exists(feature_selector_path) else None)
+        
         # Prepare features for prediction
         X = classifier.prepare_features([G])
-        X_scaled = scaler.transform(X)
         
-        # Apply feature selection if available
-        if feature_selector is not None:
-            try:
-                X_selected = feature_selector.transform(X_scaled)
-                app.logger.info(f"Feature selection applied: {X.shape[1]} features reduced to {X_selected.shape[1]}")
-                
-                # Make prediction with selected features
-                prediction = model.predict(X_selected)[0]
-                probability = model.predict_proba(X_selected)[0][1] if hasattr(model, 'predict_proba') else 0.5
-            except Exception as fs_error:
-                app.logger.warning(f"Error applying feature selection: {str(fs_error)}. Using full feature set.")
-                prediction = model.predict(X_scaled)[0]
-                probability = model.predict_proba(X_scaled)[0][1] if hasattr(model, 'predict_proba') else 0.5
-        else:
-            # Make prediction without feature selection
-            prediction = model.predict(X_scaled)[0]
-            probability = model.predict_proba(X_scaled)[0][1] if hasattr(model, 'predict_proba') else 0.5
+        # Make prediction using the enhanced classifier that handles feature dimensions consistently
+        prediction = bcc_classifier.predict(X)[0]
+        probability = bcc_classifier.predict_proba(X)[0][1]
+        
+        app.logger.info(f"Prediction: {prediction}, Probability: {probability:.4f}")
         
         prediction_label = "Basal-cell Carcinoma (BCC)" if prediction == 1 else "Seborrheic Keratosis (SK)"
         probability_pct = probability * 100
@@ -443,7 +422,7 @@ def api_predict():
                 "explanation": explanation,
                 "validation": validation_message,
                 "features_extracted": len(X[0]),
-                "features_used": X_selected.shape[1] if feature_selector is not None and 'X_selected' in locals() else len(X[0])
+                "features_used": bcc_classifier.feature_dimension if bcc_classifier.feature_dimension else len(X[0])
             }}), 200
 
     except Exception as e:
