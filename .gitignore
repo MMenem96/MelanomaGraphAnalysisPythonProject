@@ -11,3 +11,4 @@ __pycache__/
 
 # Ignore logs
 *.log
+.DS_Store
