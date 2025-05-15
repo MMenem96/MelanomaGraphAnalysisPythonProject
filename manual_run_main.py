@@ -52,6 +52,8 @@ from sklearn.metrics import (
     brier_score_loss
 )
 from sklearn.calibration import calibration_curve
+# In newer sklearn versions, calibration_curve moved to calibration module
+from sklearn.calibration import calibration_curve
 from sklearn.model_selection import (
     learning_curve, StratifiedKFold, cross_validate, train_test_split,
     GridSearchCV, RandomizedSearchCV
@@ -436,10 +438,10 @@ def train(args, logger):
                     # Calculate metrics
                     metrics = {}
                     metrics['AC'] = accuracy_score(test_labels, y_pred) * 100
-                    metrics['SN'] = recall_score(test_labels, y_pred, zero_division=0) * 100
+                    metrics['SN'] = recall_score(test_labels, y_pred, zero_division='warn') * 100
                     metrics['SP'] = specificity_score(test_labels, y_pred) * 100
-                    metrics['PR'] = precision_score(test_labels, y_pred, zero_division=0) * 100
-                    metrics['F1'] = f1_score(test_labels, y_pred, zero_division=0) * 100
+                    metrics['PR'] = precision_score(test_labels, y_pred, zero_division='warn') * 100
+                    metrics['F1'] = f1_score(test_labels, y_pred, zero_division='warn') * 100
                     metrics['NUM_FEATURES'] = X_train.shape[1]  # Total features
                     metrics['NUM_SELECTED'] = X_train_selected.shape[1]  # Selected features
                     metrics['FEATURE_REDUCTION'] = ((X_train.shape[1] - X_train_selected.shape[1]) / X_train.shape[1]) * 100
@@ -975,9 +977,9 @@ def train(args, logger):
                     
                     for threshold in thresholds:
                         y_pred_t = (y_prob >= threshold).astype(int)
-                        f1 = f1_score(y_true, y_pred_t, zero_division=0)
-                        precision = precision_score(y_true, y_pred_t, zero_division=0)
-                        recall = recall_score(y_true, y_pred_t, zero_division=0)
+                        f1 = f1_score(y_true, y_pred_t, zero_division="warn")
+                        precision = precision_score(y_true, y_pred_t, zero_division="warn")
+                        recall = recall_score(y_true, y_pred_t, zero_division="warn")
                         
                         f1_scores.append(f1)
                         precision_scores.append(precision)
@@ -1321,7 +1323,8 @@ def train_features(args, logger):
                 clf = MLPClassifier(hidden_layer_sizes=(100, 50), max_iter=1000, random_state=42)
                 classifiers['MLP'] = clf
             elif clf_name == 'xgboost':
-                clf = XGBClassifier(n_estimators=100, random_state=42)
+                # Set base_score=0.5 to fix the "base_score must be in (0,1)" error
+                clf = XGBClassifier(n_estimators=100, random_state=42, base_score=0.5)
                 classifiers['XGBoost'] = clf
             elif clf_name == 'gb':
                 clf = GradientBoostingClassifier(n_estimators=100, random_state=42)
@@ -1420,177 +1423,186 @@ def train_features(args, logger):
         for name, clf in classifiers.items():
             logger.info(f"Training and evaluating {name}")
             
-            # Cross-validation evaluation
-            cv_scores = cross_validate(
-                clf, X_train, y_train, 
-                cv=5,
-                scoring=['accuracy', 'f1', 'precision', 'recall', 'roc_auc']
-            )
-            
-            # Train final model on full training set
-            clf.fit(X_train, y_train)
-            
-            # Evaluate on test set
-            y_pred = clf.predict(X_test)
-            y_pred_proba = clf.predict_proba(X_test)[:, 1] if hasattr(clf, "predict_proba") else None
-            
-            # Calculate metrics
-            accuracy = accuracy_score(y_test, y_pred)
-            precision = precision_score(y_test, y_pred, zero_division=0)
-            recall = recall_score(y_test, y_pred, zero_division=0)
-            f1 = f1_score(y_test, y_pred, zero_division=0)
-            specificity = specificity_score(y_test, y_pred)
-            
-            # ROC AUC and confusion matrix
-            roc_auc = roc_auc_score(y_test, y_pred_proba) if y_pred_proba is not None else None
-            conf_matrix = confusion_matrix(y_test, y_pred)
-            
-            # Log results
-            logger.info(f"{name} - Test Results:")
-            logger.info(f"  Accuracy: {accuracy:.4f}")
-            logger.info(f"  Precision: {precision:.4f}")
-            logger.info(f"  Recall/Sensitivity: {recall:.4f}")
-            logger.info(f"  F1 Score: {f1:.4f}")
-            logger.info(f"  Specificity: {specificity:.4f}")
-            if roc_auc is not None:
-                logger.info(f"  ROC AUC: {roc_auc:.4f}")
-            logger.info(f"  Confusion Matrix:\n{conf_matrix}")
-            
-            # Store results
-            results[name] = {
-                'classifier': clf,
-                'cv_accuracy': cv_scores['test_accuracy'].mean(),
-                'cv_precision': cv_scores['test_precision'].mean(),
-                'cv_recall': cv_scores['test_recall'].mean(),
-                'cv_f1': cv_scores['test_f1'].mean(),
-                'cv_roc_auc': cv_scores['test_roc_auc'].mean(),
-                'test_accuracy': accuracy,
-                'test_precision': precision,
-                'test_recall': recall,
-                'test_f1': f1,
-                'test_specificity': specificity,
-                'test_roc_auc': roc_auc,
-                'confusion_matrix': conf_matrix,
-                'y_pred': y_pred,
-                'y_pred_proba': y_pred_proba
-            }
-            
-            # Plot ROC curve if probability estimates are available
-            if y_pred_proba is not None:
-                fpr, tpr, _ = roc_curve(y_test, y_pred_proba)
+            try:
+                # Cross-validation evaluation
+                cv_scores = cross_validate(
+                    clf, X_train, y_train, 
+                    cv=5,
+                    scoring=['accuracy', 'f1', 'precision', 'recall', 'roc_auc']
+                )
                 
-                plt.figure(figsize=(8, 6))
-                plt.plot(fpr, tpr, label=f'{name} (AUC = {roc_auc:.3f})')
-                plt.plot([0, 1], [0, 1], 'k--')
-                plt.xlabel('False Positive Rate')
-                plt.ylabel('True Positive Rate')
-                plt.title(f'ROC Curve - {name}')
-                plt.legend(loc='lower right')
+                # Train final model on full training set
+                clf.fit(X_train, y_train)
                 
-                output_path = f'output/metrics/roc_curve_{name.replace(" ", "_")}.png'
-                plt.savefig(output_path)
-                plt.close()
+                # Evaluate on test set
+                y_pred = clf.predict(X_test)
+                y_pred_proba = clf.predict_proba(X_test)[:, 1] if hasattr(clf, "predict_proba") else None
                 
-                logger.info(f"ROC curve saved to {output_path}")
-            
-            # Generate feature importance plot if available
-            if hasattr(clf, 'feature_importances_'):
-                # Get feature importances
-                importances = clf.feature_importances_
+                # Calculate metrics
+                accuracy = accuracy_score(y_test, y_pred)
+                precision = precision_score(y_test, y_pred, zero_division="warn")
+                recall = recall_score(y_test, y_pred, zero_division="warn")
+                f1 = f1_score(y_test, y_pred, zero_division="warn")
+                specificity = specificity_score(y_test, y_pred)
                 
-                # Sort features by importance
-                indices = np.argsort(importances)[::-1]
+                # ROC AUC and confusion matrix
+                roc_auc = roc_auc_score(y_test, y_pred_proba) if y_pred_proba is not None else None
+                conf_matrix = confusion_matrix(y_test, y_pred)
                 
-                # Take top 30 features or all if less
-                n_top_features = min(30, len(selected_feature_names))
-                top_indices = indices[:n_top_features]
+                # Log results
+                logger.info(f"{name} - Test Results:")
+                logger.info(f"  Accuracy: {accuracy:.4f}")
+                logger.info(f"  Precision: {precision:.4f}")
+                logger.info(f"  Recall/Sensitivity: {recall:.4f}")
+                logger.info(f"  F1 Score: {f1:.4f}")
+                logger.info(f"  Specificity: {specificity:.4f}")
+                if roc_auc is not None:
+                    logger.info(f"  ROC AUC: {roc_auc:.4f}")
+                logger.info(f"  Confusion Matrix:\n{conf_matrix}")
                 
-                plt.figure(figsize=(10, 8))
-                plt.title(f'Top {n_top_features} Feature Importances - {name}')
-                plt.barh(range(n_top_features), importances[top_indices], align='center')
-                plt.yticks(range(n_top_features), [selected_feature_names[i] for i in top_indices])
-                plt.xlabel('Importance')
-                plt.tight_layout()
-                
-                output_path = f'output/metrics/feature_importance_{name.replace(" ", "_")}.png'
-                plt.savefig(output_path)
-                plt.close()
-                
-                logger.info(f"Feature importance plot saved to {output_path}")
-            
-            # For SVM with linear kernel, plot feature coefficients
-            elif name == 'SVM (Linear)' and hasattr(clf, 'coef_'):
-                # Get coefficients
-                coefficients = clf.coef_[0]
-                
-                # Sort features by absolute coefficient value
-                indices = np.argsort(np.abs(coefficients))[::-1]
-                
-                # Take top 30 features or all if less
-                n_top_features = min(30, len(selected_feature_names))
-                top_indices = indices[:n_top_features]
-                
-                plt.figure(figsize=(10, 8))
-                plt.title(f'Top {n_top_features} Feature Coefficients - {name}')
-                plt.barh(range(n_top_features), coefficients[top_indices], align='center')
-                plt.yticks(range(n_top_features), [selected_feature_names[i] for i in top_indices])
-                plt.xlabel('Coefficient')
-                plt.tight_layout()
-                
-                output_path = f'output/metrics/feature_coefficients_{name.replace(" ", "_")}.png'
-                plt.savefig(output_path)
-                plt.close()
-                
-                logger.info(f"Feature coefficients plot saved to {output_path}")
-            
-            # Save model
-            os.makedirs('model/feature_based', exist_ok=True)
-            model_path = f'model/feature_based/{name.replace(" ", "_").lower()}.pkl'
-            scaler_path = f'model/feature_based/scaler.pkl'
-            metadata_path = f'model/feature_based/metadata.json'
-            
-            with open(model_path, 'wb') as f:
-                pickle.dump(clf, f)
-            
-            with open(scaler_path, 'wb') as f:
-                pickle.dump(scaler, f)
-            
-            # Save metadata (feature names, etc.)
-            metadata = {
-                'features': selected_feature_names,
-                'feature_selection': args.feature_selection,
-                'feature_set': args.feature_set,
-                'training_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'classifier': name,
-                'metrics': {
-                    'accuracy': float(accuracy),
-                    'precision': float(precision),
-                    'recall': float(recall),
-                    'f1': float(f1),
-                    'specificity': float(specificity),
-                    'roc_auc': float(roc_auc) if roc_auc is not None else None
+                # Store results
+                results[name] = {
+                    'classifier': clf,
+                    'cv_accuracy': cv_scores['test_accuracy'].mean(),
+                    'cv_precision': cv_scores['test_precision'].mean(),
+                    'cv_recall': cv_scores['test_recall'].mean(),
+                    'cv_f1': cv_scores['test_f1'].mean(),
+                    'cv_roc_auc': cv_scores['test_roc_auc'].mean(),
+                    'test_accuracy': accuracy,
+                    'test_precision': precision,
+                    'test_recall': recall,
+                    'test_f1': f1,
+                    'test_specificity': specificity,
+                    'test_roc_auc': roc_auc,
+                    'confusion_matrix': conf_matrix,
+                    'y_pred': y_pred,
+                    'y_pred_proba': y_pred_proba
                 }
-            }
-            
-            with open(metadata_path, 'w') as f:
-                json.dump(metadata, f, indent=2)
-            
-            logger.info(f"Model and metadata saved to model/feature_based directory")
+                
+                # Plot ROC curve if probability estimates are available
+                if y_pred_proba is not None:
+                    fpr, tpr, _ = roc_curve(y_test, y_pred_proba)
+                    
+                    plt.figure(figsize=(8, 6))
+                    plt.plot(fpr, tpr, label=f'{name} (AUC = {roc_auc:.3f})')
+                    plt.plot([0, 1], [0, 1], 'k--')
+                    plt.xlabel('False Positive Rate')
+                    plt.ylabel('True Positive Rate')
+                    plt.title(f'ROC Curve - {name}')
+                    plt.legend(loc='lower right')
+                    
+                    output_path = f'output/metrics/roc_curve_{name.replace(" ", "_")}.png'
+                    plt.savefig(output_path)
+                    plt.close()
+                    
+                    logger.info(f"ROC curve saved to {output_path}")
+                
+                # Generate feature importance plot if available
+                if hasattr(clf, 'feature_importances_'):
+                    # Get feature importances
+                    importances = clf.feature_importances_
+                    
+                    # Sort features by importance
+                    indices = np.argsort(importances)[::-1]
+                    
+                    # Take top 30 features or all if less
+                    n_top_features = min(30, len(selected_feature_names))
+                    top_indices = indices[:n_top_features]
+                    
+                    plt.figure(figsize=(10, 8))
+                    plt.title(f'Top {n_top_features} Feature Importances - {name}')
+                    plt.barh(range(n_top_features), importances[top_indices], align='center')
+                    plt.yticks(range(n_top_features), [selected_feature_names[i] for i in top_indices])
+                    plt.xlabel('Importance')
+                    plt.tight_layout()
+                    
+                    output_path = f'output/metrics/feature_importance_{name.replace(" ", "_")}.png'
+                    plt.savefig(output_path)
+                    plt.close()
+                    
+                    logger.info(f"Feature importance plot saved to {output_path}")
+                
+                # For SVM with linear kernel, plot feature coefficients
+                elif name == 'SVM (Linear)' and hasattr(clf, 'coef_'):
+                    # Get coefficients
+                    coefficients = clf.coef_[0]
+                    
+                    # Sort features by absolute coefficient value
+                    indices = np.argsort(np.abs(coefficients))[::-1]
+                    
+                    # Take top 30 features or all if less
+                    n_top_features = min(30, len(selected_feature_names))
+                    top_indices = indices[:n_top_features]
+                    
+                    plt.figure(figsize=(10, 8))
+                    plt.title(f'Top {n_top_features} Feature Coefficients - {name}')
+                    plt.barh(range(n_top_features), coefficients[top_indices], align='center')
+                    plt.yticks(range(n_top_features), [selected_feature_names[i] for i in top_indices])
+                    plt.xlabel('Coefficient')
+                    plt.tight_layout()
+                    
+                    output_path = f'output/metrics/feature_coefficients_{name.replace(" ", "_")}.png'
+                    plt.savefig(output_path)
+                    plt.close()
+                    
+                    logger.info(f"Feature coefficients plot saved to {output_path}")
+                    # Save model
+                    os.makedirs('model/feature_based', exist_ok=True)
+                    model_path = f'model/feature_based/{name.replace(" ", "_").lower()}.pkl'
+                    scaler_path = f'model/feature_based/scaler.pkl'
+                    metadata_path = f'model/feature_based/metadata.json'
+                    
+                    with open(model_path, 'wb') as f:
+                        pickle.dump(clf, f)
+                    
+                    with open(scaler_path, 'wb') as f:
+                        pickle.dump(scaler, f)
+                    
+                    # Save metadata (feature names, etc.)
+                    metadata = {
+                        'features': selected_feature_names,
+                        'feature_selection': args.feature_selection,
+                        'feature_set': args.feature_set,
+                        'training_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                        'classifier': name,
+                        'metrics': {
+                            'accuracy': float(accuracy),
+                            'precision': float(precision),
+                            'recall': float(recall),
+                            'f1': float(f1),
+                            'specificity': float(specificity),
+                            'roc_auc': float(roc_auc) if roc_auc is not None else None
+                        }
+                    }
+                    
+                    with open(metadata_path, 'w') as f:
+                        json.dump(metadata, f, indent=2)
+                    
+                    logger.info(f"Model and metadata saved to model/feature_based directory")
+            except Exception as e:
+                logger.error(f"Error training {name}: {str(e)}")
+                # Continue with the next classifier
         
         # Generate summary table for all classifiers
         generate_summary_table(results, logger, table_num=5, 
                              title=f"BCC vs SK Detection - Conventional Features ({args.feature_set}) Comparison")
         
-        # Plot learning curves for best classifier
-        best_classifier_name = max(results, key=lambda x: results[x]['test_f1'])
-        best_classifier = results[best_classifier_name]['classifier']
-        
-        logger.info(f"Generating learning curves for best classifier: {best_classifier_name}")
-        plot_learning_curve(
-            best_classifier, X_train, y_train, cv=5,
-            title=f"Learning Curve - {best_classifier_name} (Conventional Features)",
-            save_path=f"output/metrics/learning_curve_{best_classifier_name.replace(' ', '_')}.png"
-        )
+        # Plot learning curves for best classifier if we have any successful results
+        if results:
+            try:
+                best_classifier_name = max(results, key=lambda x: results[x]['test_f1'])
+                best_classifier = results[best_classifier_name]['classifier']
+                
+                logger.info(f"Generating learning curves for best classifier: {best_classifier_name}")
+                plot_learning_curve(
+                    best_classifier, X_train, y_train, cv=5,
+                    title=f"Learning Curve - {best_classifier_name} (Conventional Features)",
+                    save_path=f"output/metrics/learning_curve_{best_classifier_name.replace(' ', '_')}.png"
+                )
+            except Exception as e:
+                logger.error(f"Error generating learning curves: {str(e)}")
+        else:
+            logger.warning("No successful classifier results available for learning curve generation")
         
         # Calculate and report total time
         total_time = time.time() - start_time
@@ -2049,9 +2061,15 @@ def plot_learning_curve(estimator, X, y, cv=5, n_jobs=None, train_sizes=np.linsp
     try:
         # Use StratifiedKFold to ensure each fold has samples of each class
         if isinstance(cv, int):
-            # If cv is an integer, create a StratifiedKFold
-            cv = StratifiedKFold(n_splits=min(cv, np.min(np.bincount(y.astype(int)))), 
-                                shuffle=True, random_state=42)
+            # Get the class counts
+            class_counts = np.bincount(y.astype(int))
+            # Ensure each class has at least 2 samples per fold on average
+            # (minimum 2 folds, maximum original cv value)
+            safe_n_splits = min(cv, min(class_counts) // 2)
+            safe_n_splits = max(2, safe_n_splits)  # At least 2 folds
+            
+            # Create StratifiedKFold with safe number of splits
+            cv = StratifiedKFold(n_splits=safe_n_splits, shuffle=True, random_state=42)
         
         # Set error_score to 'raise' for debugging, then handle exceptions
         train_sizes, train_scores, test_scores = learning_curve(
@@ -2373,10 +2391,10 @@ def plot_f1_threshold_curve(clf, X, y, save_path=None):
             for threshold in thresholds:
                 y_pred = (y_scores >= threshold).astype(int)
                 
-                # Use zero_division=0 to avoid divide by zero errors
-                f1 = f1_score(y, y_pred, zero_division=0)
-                precision = precision_score(y, y_pred, zero_division=0)
-                recall = recall_score(y, y_pred, zero_division=0)
+                # Use zero_division="warn" to avoid divide by zero errors
+                f1 = f1_score(y, y_pred, zero_division="warn")
+                precision = precision_score(y, y_pred, zero_division="warn")
+                recall = recall_score(y, y_pred, zero_division="warn")
                 
                 f1_scores.append(f1)
                 precision_scores.append(precision)
@@ -2486,6 +2504,11 @@ def generate_summary_table(results, logger, table_num=1, title="BCC vs SK Detect
     df.to_csv(csv_path, float_format='%.2f')
     logger.info(f"Results saved to CSV: {csv_path}")
     
+    # Check if we have any columns in our DataFrame
+    if len(df.columns) == 0:
+        logger.warning("No metrics to visualize - empty results table.")
+        return
+        
     # Split into performance metrics and feature metrics for better visualization
     performance_metrics = ['Accuracy (%)', 'AUC ROC (%)', 'AUC PR (%)', 'Sensitivity (%)', 
                           'Specificity (%)', 'Precision (%)', 'F1 Score (%)']
@@ -2494,6 +2517,11 @@ def generate_summary_table(results, logger, table_num=1, title="BCC vs SK Detect
     # Filter columns that exist in our dataframe
     perf_cols = [col for col in performance_metrics if col in df.columns]
     feat_cols = [col for col in feature_metrics if col in df.columns]
+    
+    # If no performance or feature metrics are found, return early
+    if not perf_cols and not feat_cols:
+        logger.warning("No valid metrics found in results to visualize.")
+        return
     
     # Create performance metrics table
     if perf_cols:
