@@ -408,15 +408,29 @@ def train(args, logger):
                         logger.info("Optimizing hyperparameters...")
                         # Convert labels to integers for bincount
                         train_labels_int = train_labels.astype(int)
-                        cv_value = min(5, min(np.bincount(train_labels_int)))
-                        logger.info(f"Using {cv_value}-fold cross-validation for hyperparameter optimization")
+                        
+                        # Get minimum class count and ensure it's at least 2x the number of folds
+                        min_class_count = min(np.bincount(train_labels_int))
+                        # Calculate safe CV value - at minimum each class needs 2 samples per fold
+                        cv_value = min(5, min_class_count // 2)
+                        # Ensure at least 2 folds 
+                        cv_value = max(2, cv_value)
+                        
+                        logger.info(f"Using {cv_value}-fold cross-validation for hyperparameter optimization (min class count: {min_class_count})")
                         classifier.optimize_hyperparameters(X_train_selected, train_labels, cv=cv_value)
                     
                     # Train and evaluate with cross-validation
                     # Convert labels to integers for bincount
                     train_labels_int = train_labels.astype(int)
-                    cv_value = min(5, min(np.bincount(train_labels_int)))
-                    logger.info(f"Using {cv_value}-fold cross-validation for evaluation")
+                    
+                    # Get minimum class count and ensure it's at least 2x the number of folds
+                    min_class_count = min(np.bincount(train_labels_int))
+                    # Calculate safe CV value - at minimum each class needs 2 samples per fold
+                    cv_value = min(5, min_class_count // 2)
+                    # Ensure at least 2 folds
+                    cv_value = max(2, cv_value)
+                    
+                    logger.info(f"Using {cv_value}-fold cross-validation for evaluation (min class count: {min_class_count})")
                     cv_results = classifier.train_evaluate(X_train_selected, train_labels, cv=cv_value)
                     
                     training_time = time.time() - start_training
@@ -1094,6 +1108,8 @@ def train_features(args, logger):
         args: Command line arguments
         logger: Logger instance
     """
+    # Explicitly import the train_test_split function to make sure it's in scope
+    from sklearn.model_selection import train_test_split
     try:
         # Start timer
         start_time = time.time()
