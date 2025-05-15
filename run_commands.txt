@@ -11,4 +11,4 @@ python manual_run_main.py --mode train --classifier cnn --cnn_model efficient_ne
 Feature Extraction without graph:
 python manual_run_main.py --mode train_features --feature_set full --feature_selection mutual_info --feature_classifiers rf,svm_rbf,xgboost --optimize
 
-python manual_run_main.py --mode train_features --feature_set full --feature_selection mutual_info --feature_classifiers rf,svm_rbf,xgboost --optimize --max-images-per-class 1000
+python manual_run_main.py --mode train_features --feature_set full --feature_selection mutual_info --feature_classifiers rf,svm_rbf,svm_linear,knn,mlp,gb,logistic,xgboost --optimize --max-images-per-class 30

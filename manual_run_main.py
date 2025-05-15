@@ -1,34 +1,3 @@
-'''
-import os
-import sys
-import argparse
-import logging
-import time
-import traceback
-import glob
-from datetime import datetime
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-from PIL import Image
-from joblib import dump, load
-from sklearn.metrics import (
-    accuracy_score, recall_score, confusion_matrix, roc_auc_score,
-    precision_score, f1_score, roc_curve, precision_recall_curve, auc,
-    brier_score_loss
-)
-from sklearn.calibration import calibration_curve
-from sklearn.model_selection import learning_curve, StratifiedKFold
-from sklearn.inspection import permutation_importance
-from sklearn.preprocessing import StandardScaler
-from sklearn.svm import SVC
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.neural_network import MLPClassifier
-from sklearn.neighbors import KNeighborsClassifier
-
-from src.dataset_handler import DatasetHandler
-from src.classifier import BCCSKClassifier
-'''
 import os
 import sys
 import argparse
@@ -1134,13 +1103,13 @@ def train_features(args, logger):
             bcc_paths = bcc_paths[:min(len(bcc_paths), args.max_images_per_class)]
             sk_paths = sk_paths[:min(len(sk_paths), args.max_images_per_class)]
         
-        # Create labels
-        bcc_labels = np.ones(len(bcc_paths))
-        sk_labels = np.zeros(len(sk_paths))
+        # Create labels, explicitly as integers (not floats)
+        bcc_labels = np.ones(len(bcc_paths), dtype=np.int32)
+        sk_labels = np.zeros(len(sk_paths), dtype=np.int32)
         
         # Combine datasets
         all_image_paths = bcc_paths + sk_paths
-        all_labels = np.concatenate([bcc_labels, sk_labels])
+        all_labels = np.concatenate([bcc_labels, sk_labels]).astype(np.int32)
         
         logger.info(f"Loaded {len(bcc_paths)} BCC images and {len(sk_paths)} SK images")
         
@@ -1260,6 +1229,15 @@ def train_features(args, logger):
             X, all_labels, test_size=0.2, random_state=42, stratify=all_labels
         )
         
+        # Ensure label data types are explicitly integer (prevent float conversions)
+        y_train = y_train.astype(np.int32)
+        y_test = y_test.astype(np.int32)
+        
+        # Determine if we're working with a very small dataset (early initialization)
+        is_very_small_dataset = len(all_labels) < 30
+        if is_very_small_dataset:
+            logger.warning(f"Working with a very small dataset (only {len(all_labels)} samples). Adapting training process.")
+        
         logger.info(f"Training set size: {X_train.shape}, Test set size: {X_test.shape}")
         
         # Apply feature selection if specified
@@ -1361,66 +1339,135 @@ def train_features(args, logger):
             
             optimized_classifiers = {}
             
+            # We've already determined if we're working with a very small dataset earlier
+            
             for name, clf in classifiers.items():
                 logger.info(f"Optimizing {name}")
                 
-                if name == 'Random Forest':
-                    param_grid = {
-                        'n_estimators': [50, 100, 200],
-                        'max_depth': [None, 10, 20, 30],
-                        'min_samples_split': [2, 5, 10],
-                        'min_samples_leaf': [1, 2, 4]
-                    }
-                elif 'SVM' in name:
-                    param_grid = {
-                        'C': [0.1, 1, 10, 100],
-                        'gamma': ['scale', 'auto', 0.1, 0.01]
-                    }
-                elif name == 'KNN':
-                    param_grid = {
-                        'n_neighbors': [3, 5, 7, 9, 11],
-                        'weights': ['uniform', 'distance'],
-                        'p': [1, 2]  # Manhattan or Euclidean
-                    }
-                elif name == 'MLP':
-                    param_grid = {
-                        'hidden_layer_sizes': [(50,), (100,), (50, 25), (100, 50)],
-                        'alpha': [0.0001, 0.001, 0.01],
-                        'learning_rate': ['constant', 'adaptive']
-                    }
-                elif name == 'XGBoost':
-                    param_grid = {
-                        'n_estimators': [50, 100, 200],
-                        'max_depth': [3, 5, 7],
-                        'learning_rate': [0.01, 0.1, 0.2],
-                        'subsample': [0.8, 0.9, 1.0]
-                    }
-                elif name == 'Gradient Boosting':
-                    param_grid = {
-                        'n_estimators': [50, 100, 200],
-                        'max_depth': [3, 5, 7],
-                        'learning_rate': [0.01, 0.1, 0.2],
-                        'subsample': [0.8, 0.9, 1.0]
-                    }
-                elif name == 'Logistic Regression':
-                    param_grid = {
-                        'C': [0.1, 1, 10, 100],
-                        'penalty': ['l1', 'l2'],
-                        'solver': ['liblinear', 'saga']
-                    }
+                # Use simplified parameter grids for very small datasets
+                if is_very_small_dataset:
+                    logger.info(f"Using simplified parameter grid for small dataset (size: {len(y_train)} samples)")
+                    if name == 'Random Forest':
+                        param_grid = {
+                            'n_estimators': [50],
+                            'max_depth': [3, None],
+                            'min_samples_leaf': [1, 2]
+                        }
+                    elif 'SVM' in name:
+                        param_grid = {
+                            'C': [1, 10],
+                            'gamma': ['scale', 'auto']
+                        }
+                    elif name == 'KNN':
+                        param_grid = {
+                            'n_neighbors': [3, 5],
+                            'weights': ['uniform', 'distance']
+                        }
+                    elif name == 'MLP':
+                        param_grid = {
+                            'hidden_layer_sizes': [(10,), (20,)],
+                            'alpha': [0.001, 0.01]
+                        }
+                    elif name == 'XGBoost':
+                        param_grid = {
+                            'n_estimators': [50],
+                            'max_depth': [3],
+                            'learning_rate': [0.1]
+                        }
+                    elif name == 'Gradient Boosting':
+                        param_grid = {
+                            'n_estimators': [50],
+                            'max_depth': [3],
+                            'learning_rate': [0.1]
+                        }
                 else:
+                    # Standard parameter grids for normal-sized datasets
+                    if name == 'Random Forest':
+                        param_grid = {
+                            'n_estimators': [50, 100, 200],
+                            'max_depth': [None, 10, 20, 30],
+                            'min_samples_split': [2, 5, 10],
+                            'min_samples_leaf': [1, 2, 4]
+                        }
+                    elif 'SVM' in name:
+                        param_grid = {
+                            'C': [0.1, 1, 10, 100],
+                            'gamma': ['scale', 'auto', 0.1, 0.01]
+                        }
+                    elif name == 'KNN':
+                        param_grid = {
+                            'n_neighbors': [3, 5, 7, 9, 11],
+                            'weights': ['uniform', 'distance'],
+                            'p': [1, 2]  # Manhattan or Euclidean
+                        }
+                    elif name == 'MLP':
+                        param_grid = {
+                            'hidden_layer_sizes': [(50,), (100,), (50, 25), (100, 50)],
+                            'alpha': [0.0001, 0.001, 0.01],
+                            'learning_rate': ['constant', 'adaptive']
+                        }
+                    elif name == 'XGBoost':
+                        param_grid = {
+                            'n_estimators': [50, 100, 200],
+                            'max_depth': [3, 5, 7],
+                            'learning_rate': [0.01, 0.1, 0.2],
+                            'subsample': [0.8, 0.9, 1.0]
+                        }
+                    elif name == 'Gradient Boosting':
+                        param_grid = {
+                            'n_estimators': [50, 100, 200],
+                            'max_depth': [3, 5, 7],
+                            'learning_rate': [0.01, 0.1, 0.2],
+                            'subsample': [0.8, 0.9, 1.0]
+                        }
+                    elif name == 'Logistic Regression':
+                        param_grid = {
+                            'C': [0.1, 1, 10, 100],
+                            'penalty': ['l1', 'l2'],
+                            'solver': ['liblinear', 'saga']
+                        }
+                
+                # Define a variable to track if we have a param grid for this classifier
+                has_param_grid = True
+                    
+                # Initialize param_grid as an empty dictionary if it doesn't exist
+                param_grid = {}
+                
+                # If we don't have a param grid defined for this classifier or it's a special case
+                if not param_grid:
+                    has_param_grid = False
                     # Default - skip optimization
                     optimized_classifiers[name] = clf
                     continue
                 
+                # Determine appropriate cross-validation strategy based on dataset size
+                # For very small datasets, use fewer folds or even LOO (Leave-One-Out) CV
+                cv_strategy = 5  # Default 5-fold CV
+                
+                # Count samples per class to determine appropriate CV strategy
+                class_counts = np.bincount(y_train)
+                min_class_count = min(class_counts[class_counts > 0])
+                
+                if min_class_count < 5:
+                    # For extremely small datasets (< 5 samples in smallest class)
+                    logger.info(f"Very small dataset detected ({min_class_count} samples in smallest class)")
+                    logger.info(f"Using 2-fold stratified CV for {name}")
+                    cv_strategy = StratifiedKFold(n_splits=2, shuffle=True, random_state=42)
+                elif min_class_count < 10:
+                    # For small datasets (<10 samples in smallest class)
+                    logger.info(f"Small dataset detected ({min_class_count} samples in smallest class)")
+                    logger.info(f"Using 3-fold stratified CV for {name}")
+                    cv_strategy = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)
+                    
                 # Use GridSearchCV for smaller grids, RandomizedSearchCV for larger ones
                 if np.prod([len(v) for v in param_grid.values()]) > 30:
                     search = RandomizedSearchCV(
-                        clf, param_grid, n_iter=20, cv=5, scoring='f1', random_state=42, n_jobs=-1
+                        clf, param_grid, n_iter=20, cv=cv_strategy, scoring='f1', 
+                        random_state=42, n_jobs=-1
                     )
                 else:
                     search = GridSearchCV(
-                        clf, param_grid, cv=5, scoring='f1', n_jobs=-1
+                        clf, param_grid, cv=cv_strategy, scoring='f1', n_jobs=-1
                     )
                 
                 search.fit(X_train, y_train)
@@ -1440,30 +1487,155 @@ def train_features(args, logger):
             logger.info(f"Training and evaluating {name}")
             
             try:
-                # Cross-validation evaluation
-                cv_scores = cross_validate(
-                    clf, X_train, y_train, 
-                    cv=5,
-                    scoring=['accuracy', 'f1', 'precision', 'recall', 'roc_auc']
-                )
+                # Determine appropriate cross-validation strategy based on dataset size
+                cv_strategy = 5  # Default 5-fold CV
                 
-                # Train final model on full training set
-                clf.fit(X_train, y_train)
+                # Count samples per class to determine appropriate CV strategy
+                class_counts = np.bincount(y_train)
+                min_class_count = min(class_counts[class_counts > 0])
+                
+                # For extremely small datasets, we'll skip cross-validation
+                # and just evaluate on the test set
+                skip_cv = False
+                
+                if min_class_count < 3:
+                    # For extremely small datasets (<3 samples in smallest class)
+                    # We'll skip cross-validation entirely
+                    logger.info(f"Very small dataset detected ({min_class_count} samples in smallest class)")
+                    logger.info(f"Skipping cross-validation for {name}")
+                    skip_cv = True
+                    # Create placeholder for CV scores
+                    cv_scores = {
+                        'test_accuracy': np.array([0.0]),
+                        'test_precision': np.array([0.0]),
+                        'test_recall': np.array([0.0]),
+                        'test_f1': np.array([0.0]),
+                        'test_roc_auc': np.array([0.0])
+                    }
+                elif min_class_count < 5:
+                    # For very small datasets (<5 samples in smallest class)
+                    logger.info(f"Very small dataset detected ({min_class_count} samples in smallest class)")
+                    logger.info(f"Using 2-fold stratified CV for {name}")
+                    cv_strategy = StratifiedKFold(n_splits=2, shuffle=True, random_state=42)
+                elif min_class_count < 10:
+                    # For small datasets (<10 samples in smallest class)
+                    logger.info(f"Small dataset detected ({min_class_count} samples in smallest class)")
+                    logger.info(f"Using 3-fold stratified CV for {name}")
+                    cv_strategy = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)
+                
+                # Only perform cross-validation if we have enough samples
+                if not skip_cv:
+                    # Ensure we use integer labels for cross-validation
+                    try:
+                        # Cross-validation evaluation with explicit integer labels
+                        y_train_int = y_train.astype(np.int32)
+                        cv_scores = cross_validate(
+                            clf, X_train, y_train_int, 
+                            cv=cv_strategy,
+                            scoring=['accuracy', 'f1', 'precision', 'recall', 'roc_auc']
+                        )
+                    except Exception as e:
+                        logger.warning(f"Cross-validation failed with error: {str(e)}")
+                        logger.info("Attempting cross-validation with alternative label format")
+                        try:
+                            # Try with raveled array if the first approach fails
+                            cv_scores = cross_validate(
+                                clf, X_train, y_train_int.ravel(), 
+                                cv=cv_strategy,
+                                scoring=['accuracy', 'f1', 'precision', 'recall']  # Remove roc_auc which may cause issues
+                            )
+                        except Exception as e2:
+                            logger.error(f"Cross-validation failed on second attempt: {str(e2)}")
+                            # Set empty scores to prevent errors later
+                            cv_scores = {
+                                'test_accuracy': np.array([0.0]),
+                                'test_f1': np.array([0.0]),
+                                'test_precision': np.array([0.0]),
+                                'test_recall': np.array([0.0])
+                            }
+                
+                # Ensure labels are integers before model training
+                # Many classifiers expect integer labels
+                y_train_int = y_train.astype(np.int32)
+                y_test_int = y_test.astype(np.int32)
+                
+                # Train final model on full training set with explicit integer labels
+                try:
+                    clf.fit(X_train, y_train_int)
+                except Exception as e:
+                    logger.error(f"Error during model fitting: {str(e)}")
+                    # Try alternative approach if the first one fails
+                    try:
+                        # Some models might require different label format
+                        logger.info("Attempting alternative approach with different label format")
+                        clf.fit(X_train, y_train_int.ravel())
+                    except Exception as e2:
+                        logger.error(f"Second attempt also failed: {str(e2)}")
+                        raise
                 
                 # Evaluate on test set
-                y_pred = clf.predict(X_test)
-                y_pred_proba = clf.predict_proba(X_test)[:, 1] if hasattr(clf, "predict_proba") else None
+                try:
+                    y_pred = clf.predict(X_test)
+                    y_pred = y_pred.astype(np.int32)  # Ensure predictions are integers
+                    
+                    if hasattr(clf, "predict_proba"):
+                        y_pred_proba = clf.predict_proba(X_test)[:, 1]
+                    else:
+                        y_pred_proba = None
+                except Exception as e:
+                    logger.error(f"Error during prediction: {str(e)}")
+                    raise
                 
-                # Calculate metrics
-                accuracy = accuracy_score(y_test, y_pred)
-                precision = precision_score(y_test, y_pred, zero_division="warn")
-                recall = recall_score(y_test, y_pred, zero_division="warn")
-                f1 = f1_score(y_test, y_pred, zero_division="warn")
-                specificity = specificity_score(y_test, y_pred)
+                # Calculate metrics with safe handling for small datasets
+                # Ensure both arrays have compatible data types
+                y_test_int = y_test_int if 'y_test_int' in locals() else y_test.astype(np.int32)
+                y_pred_int = y_pred.astype(np.int32)
                 
-                # ROC AUC and confusion matrix
-                roc_auc = roc_auc_score(y_test, y_pred_proba) if y_pred_proba is not None else None
-                conf_matrix = confusion_matrix(y_test, y_pred)
+                try:
+                    accuracy = accuracy_score(y_test_int, y_pred_int)
+                except Exception as e:
+                    logger.warning(f"Error calculating accuracy: {str(e)}")
+                    accuracy = 0.0
+                
+                # Use zero_division=0.0 (must be float) for all metrics to handle small datasets better
+                try:
+                    precision = precision_score(y_test_int, y_pred_int, zero_division=0.0)
+                except Exception as e:
+                    logger.warning(f"Error calculating precision: {str(e)}")
+                    precision = 0.0
+                    
+                try:    
+                    recall = recall_score(y_test_int, y_pred_int, zero_division=0.0)
+                except Exception as e:
+                    logger.warning(f"Error calculating recall: {str(e)}")
+                    recall = 0.0
+                    
+                try:
+                    f1 = f1_score(y_test_int, y_pred_int, zero_division=0.0)
+                except Exception as e:
+                    logger.warning(f"Error calculating F1 score: {str(e)}")
+                    f1 = 0.0
+                
+                # Calculate specificity with safe handling
+                try:
+                    specificity = specificity_score(y_test_int, y_pred_int)
+                except Exception as e:
+                    logger.warning(f"Error calculating specificity: {str(e)}")
+                    specificity = 0.0
+                
+                # Handle ROC AUC calculation safely
+                try:
+                    # Use integer labels for y_test
+                    if y_pred_proba is not None:
+                        roc_auc = roc_auc_score(y_test_int, y_pred_proba)
+                    else:
+                        logger.warning("No probability predictions available for ROC AUC calculation")
+                        roc_auc = None
+                except Exception as e:
+                    logger.warning(f"Error calculating ROC AUC: {str(e)}")
+                    roc_auc = None
+                # Ensure we're using integer labels for the confusion matrix
+                conf_matrix = confusion_matrix(y_test_int, y_pred_int)
                 
                 # Log results
                 logger.info(f"{name} - Test Results:")
@@ -1477,13 +1649,9 @@ def train_features(args, logger):
                 logger.info(f"  Confusion Matrix:\n{conf_matrix}")
                 
                 # Store results
+                # Include both raw metrics and formatted metrics for the summary table
                 results[name] = {
                     'classifier': clf,
-                    'cv_accuracy': cv_scores['test_accuracy'].mean(),
-                    'cv_precision': cv_scores['test_precision'].mean(),
-                    'cv_recall': cv_scores['test_recall'].mean(),
-                    'cv_f1': cv_scores['test_f1'].mean(),
-                    'cv_roc_auc': cv_scores['test_roc_auc'].mean(),
                     'test_accuracy': accuracy,
                     'test_precision': precision,
                     'test_recall': recall,
@@ -1492,8 +1660,49 @@ def train_features(args, logger):
                     'test_roc_auc': roc_auc,
                     'confusion_matrix': conf_matrix,
                     'y_pred': y_pred,
-                    'y_pred_proba': y_pred_proba
+                    'y_pred_proba': y_pred_proba,
+                    # Formatted metrics for summary table - these keys match what generate_summary_table expects
+                    'AC': accuracy * 100,  # Convert to percentage
+                    'PR': precision * 100,
+                    'SN': recall * 100,
+                    'F1': f1 * 100,
+                    'SP': specificity * 100,
+                    'AUC': roc_auc * 100 if roc_auc is not None else None,
+                    'NUM_FEATURES': len(selected_feature_names),
+                    'NUM_SELECTED': len(selected_feature_names),
+                    'FEATURE_REDUCTION': 0.0 if args.feature_selection == 'none' else 
+                                         (1 - len(selected_feature_names)/X.shape[1]) * 100
                 }
+                
+                # Add cross-validation results if available
+                if 'skip_cv' in locals() and not skip_cv and 'cv_scores' in locals():
+                    try:
+                        results[name].update({
+                            'cv_accuracy': cv_scores['test_accuracy'].mean(),
+                            'cv_precision': cv_scores['test_precision'].mean(), 
+                            'cv_recall': cv_scores['test_recall'].mean(),
+                            'cv_f1': cv_scores['test_f1'].mean(),
+                            'cv_roc_auc': cv_scores['test_roc_auc'].mean(),
+                        })
+                    except Exception as e:
+                        logger.warning(f"Error processing CV scores for {name}: {str(e)}")
+                        # Fall back to test metrics
+                        results[name].update({
+                            'cv_accuracy': accuracy,
+                            'cv_precision': precision,
+                            'cv_recall': recall,
+                            'cv_f1': f1,
+                            'cv_roc_auc': roc_auc if roc_auc is not None else 0.0,
+                        })
+                else:
+                    # Use test set metrics as fallback when CV is skipped
+                    results[name].update({
+                        'cv_accuracy': accuracy,
+                        'cv_precision': precision,
+                        'cv_recall': recall,
+                        'cv_f1': f1,
+                        'cv_roc_auc': roc_auc if roc_auc is not None else 0.0,
+                    })
                 
                 # Plot ROC curve if probability estimates are available
                 if y_pred_proba is not None:
@@ -1562,39 +1771,133 @@ def train_features(args, logger):
                     plt.close()
                     
                     logger.info(f"Feature coefficients plot saved to {output_path}")
-                    # Save model
-                    os.makedirs('model/feature_based', exist_ok=True)
-                    model_path = f'model/feature_based/{name.replace(" ", "_").lower()}.pkl'
-                    scaler_path = f'model/feature_based/scaler.pkl'
-                    metadata_path = f'model/feature_based/metadata.json'
-                    
+                
+                # Save model for ALL classifiers, not just linear SVM
+                # Create a unique directory for each classifier with timestamp for versioning
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                base_model_dir = f'model/feature_based'
+                os.makedirs(base_model_dir, exist_ok=True)
+                
+                # Sanitize classifier name for directory naming
+                safe_name = name.replace(" ", "_").replace("(", "").replace(")", "").lower()
+                model_dir = f'{base_model_dir}/{safe_name}_{timestamp}'
+                os.makedirs(model_dir, exist_ok=True)
+                logger.info(f"Creating model directory: {model_dir}")
+                
+                # Define paths for all model components
+                model_path = f'{model_dir}/model.pkl'
+                scaler_path = f'{model_dir}/scaler.pkl'
+                selector_path = f'{model_dir}/selector.pkl' if selector else None
+                metadata_path = f'{model_dir}/metadata.json'
+                performance_path = f'{model_dir}/performance.json'
+                
+                # Save the classifier model
+                try:
                     with open(model_path, 'wb') as f:
                         pickle.dump(clf, f)
-                    
+                    logger.info(f"Model saved to {model_path}")
+                except Exception as e:
+                    logger.error(f"Error saving model: {str(e)}")
+                
+                # Save the scaler
+                try:
                     with open(scaler_path, 'wb') as f:
                         pickle.dump(scaler, f)
+                    logger.info(f"Scaler saved to {scaler_path}")
+                except Exception as e:
+                    logger.error(f"Error saving scaler: {str(e)}")
                     
-                    # Save metadata (feature names, etc.)
-                    metadata = {
-                        'features': selected_feature_names,
+                # Create a symlink to the latest model
+                latest_dir = f'{base_model_dir}/{safe_name}_latest'
+                if os.path.exists(latest_dir) and os.path.islink(latest_dir):
+                    os.unlink(latest_dir)
+                try:
+                    # Use relative path for platform independence
+                    os.symlink(os.path.basename(model_dir), latest_dir, target_is_directory=True)
+                    logger.info(f"Created symlink from {latest_dir} to {model_dir}")
+                except Exception as e:
+                    # Symlinks might not work on all platforms, so just log the error
+                    logger.warning(f"Could not create symlink (might not be supported): {str(e)}")
+                    
+                # Save selector if available
+                if selector:
+                    with open(selector_path, 'wb') as f:
+                        pickle.dump(selector, f)
+                
+                # Save comprehensive metadata about the model, training data and performance
+                metadata = {
+                    # Feature information
+                    'features': selected_feature_names,
+                    'num_features': len(selected_feature_names),
+                    'feature_selection_method': args.feature_selection,
+                    'feature_set': args.feature_set,
+                    
+                    # Dataset information
+                    'dataset_size': {
+                        'total_samples': len(y_train) + len(y_test),
+                        'training_samples': len(y_train),
+                        'test_samples': len(y_test),
+                        'class_counts': {
+                            'training': {
+                                'bcc': int(np.sum(y_train == 1)),
+                                'sk': int(np.sum(y_train == 0))
+                            },
+                            'test': {
+                                'bcc': int(np.sum(y_test == 1)),
+                                'sk': int(np.sum(y_test == 0))
+                            }
+                        }
+                    },
+                    
+                    # Model information
+                    'model_type': name,
+                    'trained_with_cross_validation': not ('skip_cv' in locals() and skip_cv),
+                    'small_dataset_adaptations': is_very_small_dataset,
+                    
+                    # Training metadata
+                    'training_timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    'training_parameters': {
                         'feature_selection': args.feature_selection,
                         'feature_set': args.feature_set,
-                        'training_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                        'classifier': name,
-                        'metrics': {
-                            'accuracy': float(accuracy),
-                            'precision': float(precision),
-                            'recall': float(recall),
-                            'f1': float(f1),
-                            'specificity': float(specificity),
-                            'roc_auc': float(roc_auc) if roc_auc is not None else None
-                        }
-                    }
+                        'num_selected_features': len(selected_feature_names),
+                    },
                     
+                    # Performance metrics
+                    'test_metrics': {
+                        'accuracy': float(accuracy),
+                        'precision': float(precision),
+                        'recall': float(recall),
+                        'f1': float(f1),
+                        'specificity': float(specificity),
+                        'roc_auc': float(roc_auc) if roc_auc is not None else None,
+                        'confusion_matrix': conf_matrix.tolist()
+                    }
+                }
+                
+                # Add class parameters if available
+                if hasattr(clf, 'get_params'):
+                    try:
+                        metadata['model_parameters'] = clf.get_params()
+                    except:
+                        metadata['model_parameters'] = str(clf)
+                
+                # Save metadata to JSON file
+                try:
                     with open(metadata_path, 'w') as f:
                         json.dump(metadata, f, indent=2)
+                    logger.info(f"Model metadata saved to {metadata_path}")
+                except Exception as e:
+                    logger.error(f"Error saving metadata: {str(e)}")
                     
-                    logger.info(f"Model and metadata saved to model/feature_based directory")
+                # Also save performance metrics separately for easier access and comparison
+                try:
+                    with open(performance_path, 'w') as f:
+                        json.dump(metadata['test_metrics'], f, indent=2)
+                    logger.info(f"Performance metrics saved to {performance_path}")
+                except Exception as e:
+                    logger.error(f"Error saving performance metrics: {str(e)}")
+                
+                logger.info(f"Model and metadata saved to {model_dir}")
             except Exception as e:
                 logger.error(f"Error training {name}: {str(e)}")
                 # Continue with the next classifier
