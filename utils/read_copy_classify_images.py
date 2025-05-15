@@ -3,11 +3,11 @@ import shutil
 import os
 
 # Load the CSV file
-csv_file = "/Users/mmoniem96/Downloads/ISIC-images/metadata.csv"
-df = pd.read_csv(csv_file) 
+csv_file = "/Users/mmoniem96/Desktop/Work/Master/Images/HAM100000-Images/metadata.csv"
+df = pd.read_csv(csv_file)
 
 # Path to the image folder
-image_folder = "/Users/mmoniem96/Downloads/ISIC-images/"
+image_folder = "/Users/mmoniem96/Desktop/Work/Master/Images/HAM100000-Images/"
 
 # Paths to the destination folders
 benign_folder = "data/sk"
@@ -19,17 +19,15 @@ os.makedirs(malignant_folder, exist_ok=True)
 
 # Iterate over the rows of the DataFrame
 for index, row in df.iterrows():
-    image_filename = row['isic_id'] + '.jpg' 
-    diagnosis = row['diagnosis_1'] 
+    image_filename = row['isic_id'] + '.jpg'
+    diagnosis = str(row['diagnosis_3']).lower()  # Ensure it's a string
     
-    # Define source and destination paths
     source_image_path = os.path.join(image_folder, image_filename)
-  
     
     # Depending on the diagnosis, move the image to the appropriate folder
-    if diagnosis == 'Benign':  # Adjust as per your dataset
+    if 'keratosis' in diagnosis:
         destination_path = os.path.join(benign_folder, image_filename)
-    elif diagnosis == 'Malignant':  # Adjust as per your dataset
+    elif 'basal cell carcinoma' in diagnosis:
         destination_path = os.path.join(malignant_folder, image_filename)
     else:
         continue  # Skip if diagnosis is not recognized
@@ -39,5 +37,3 @@ for index, row in df.iterrows():
         shutil.copy(source_image_path, destination_path)
     else:
         print(f"Image {image_filename} not found!")
-        print(f"source_image_path {source_image_path} not found!")
-        print(f"destination_path {destination_path} not found!")

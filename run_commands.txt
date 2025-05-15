@@ -2,3 +2,13 @@ Train & Compare:
 python manual_run_main.py --mode train --classifiers all --bcc-dir data/bcc --sk-dir data/sk  --max-images-per-class 10
 
 Classify or predict: python manual_run_main.py --mode classify --classifiers rf --image-path path/to/image.jpg
+
+
+CNN:
+python manual_run_main.py --mode train --classifier cnn --cnn_model efficient_net --enhanced --epochs 50 --fine_tune_epochs 20 --unfreeze_layers 20 --mixup_alpha 0.3
+
+
+Feature Extraction without graph:
+python manual_run_main.py --mode train_features --feature_set full --feature_selection mutual_info --feature_classifiers rf,svm_rbf,xgboost --optimize
+
+python manual_run_main.py --mode train_features --feature_set full --feature_selection mutual_info --feature_classifiers rf,svm_rbf,xgboost --optimize --max-images-per-class 1000
