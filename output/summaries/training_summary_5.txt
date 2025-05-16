@@ -1,0 +1,100 @@
+BCC vs SK Detection - Conventional Features (full) Comparison
+=============================================================
+
+Training completed on: 2025-05-16 03:07:28
+
+Results by classifier:
+--------------------------------------------------------------------------------
+
+Classifier: Random Forest
+------------------------
+Performance Metrics:
+
+Feature Information:
+  Total Features: 100
+  Selected Features: 100
+  Feature Reduction: 73.61%
+
+
+Classifier: SVM (RBF)
+--------------------
+Performance Metrics:
+
+Feature Information:
+  Total Features: 100
+  Selected Features: 100
+  Feature Reduction: 73.61%
+
+
+Classifier: SVM (Linear)
+-----------------------
+Performance Metrics:
+
+Feature Information:
+  Total Features: 100
+  Selected Features: 100
+  Feature Reduction: 73.61%
+
+
+Classifier: KNN
+--------------
+Performance Metrics:
+
+Feature Information:
+  Total Features: 100
+  Selected Features: 100
+  Feature Reduction: 73.61%
+
+
+Classifier: MLP
+--------------
+Performance Metrics:
+
+Feature Information:
+  Total Features: 100
+  Selected Features: 100
+  Feature Reduction: 73.61%
+
+
+Classifier: Gradient Boosting
+----------------------------
+Performance Metrics:
+
+Feature Information:
+  Total Features: 100
+  Selected Features: 100
+  Feature Reduction: 73.61%
+
+
+Classifier: Logistic Regression
+------------------------------
+Performance Metrics:
+
+Feature Information:
+  Total Features: 100
+  Selected Features: 100
+  Feature Reduction: 73.61%
+
+
+Classifier: XGBoost
+------------------
+Performance Metrics:
+
+Feature Information:
+  Total Features: 100
+  Selected Features: 100
+  Feature Reduction: 73.61%
+
+
+Summary Table:
+--------------------------------------------------------------------------------
+                    Accuracy (%) AUC ROC (%) Sensitivity (%) Specificity (%) Precision (%) F1 Score (%) Total Features Selected Features Feature Reduction (%)
+Random Forest              83.33       88.89           83.33           83.33         83.33        83.33            100               100                 73.61
+SVM (RBF)                  91.67       88.89          100.00           83.33         85.71        92.31            100               100                 73.61
+SVM (Linear)               75.00       86.11           83.33           66.67         71.43        76.92            100               100                 73.61
+KNN                        83.33       81.94          100.00           66.67         75.00        85.71            100               100                 73.61
+MLP                        91.67       86.11          100.00           83.33         85.71        92.31            100               100                 73.61
+Gradient Boosting          83.33       87.50           83.33           83.33         83.33        83.33            100               100                 73.61
+Logistic Regression        83.33       91.67           83.33           83.33         83.33        83.33            100               100                 73.61
+XGBoost                    83.33       94.44           83.33           83.33         83.33        83.33            100               100                 73.61
+

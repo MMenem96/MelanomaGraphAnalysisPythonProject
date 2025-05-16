@@ -1785,24 +1785,22 @@ def train_features(args, logger):
                 logger.info(f"Creating model directory: {model_dir}")
                 
                 # Define paths for all model components
-                model_path = f'{model_dir}/model.pkl'
-                scaler_path = f'{model_dir}/scaler.pkl'
-                selector_path = f'{model_dir}/selector.pkl' if selector else None
+                model_path = f'{model_dir}/model.joblib'
+                scaler_path = f'{model_dir}/scaler.joblib'
+                selector_path = f'{model_dir}/selector.joblib' if selector else None
                 metadata_path = f'{model_dir}/metadata.json'
                 performance_path = f'{model_dir}/performance.json'
                 
-                # Save the classifier model
+                # Save the classifier model using joblib for better performance
                 try:
-                    with open(model_path, 'wb') as f:
-                        pickle.dump(clf, f)
+                    dump(clf, model_path)
                     logger.info(f"Model saved to {model_path}")
                 except Exception as e:
                     logger.error(f"Error saving model: {str(e)}")
                 
-                # Save the scaler
+                # Save the scaler using joblib
                 try:
-                    with open(scaler_path, 'wb') as f:
-                        pickle.dump(scaler, f)
+                    dump(scaler, scaler_path)
                     logger.info(f"Scaler saved to {scaler_path}")
                 except Exception as e:
                     logger.error(f"Error saving scaler: {str(e)}")
@@ -1819,10 +1817,13 @@ def train_features(args, logger):
                     # Symlinks might not work on all platforms, so just log the error
                     logger.warning(f"Could not create symlink (might not be supported): {str(e)}")
                     
-                # Save selector if available
+                # Save selector if available using joblib
                 if selector:
-                    with open(selector_path, 'wb') as f:
-                        pickle.dump(selector, f)
+                    try:
+                        dump(selector, selector_path)
+                        logger.info(f"Feature selector saved to {selector_path}")
+                    except Exception as e:
+                        logger.error(f"Error saving feature selector: {str(e)}")
                 
                 # Save comprehensive metadata about the model, training data and performance
                 metadata = {
