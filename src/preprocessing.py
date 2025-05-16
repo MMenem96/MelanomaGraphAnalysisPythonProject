@@ -3,6 +3,7 @@ from PIL import Image
 from skimage import color, exposure
 import logging
 import os
+import cv2
 
 class ImagePreprocessor:
     def __init__(self):
@@ -11,6 +12,7 @@ class ImagePreprocessor:
         self.logger = logging.getLogger(__name__)
         self.target_size = (750, 750)  # Standard size as per paper [52]
         self.clahe_clip_limit = 0.03  # CLAHE parameter from paper
+        self.gaussian_sigma = 0.8  # Gaussian filter sigma for noise reduction
 
     def load_image(self, image_path):
         """Load and validate image."""
@@ -55,15 +57,22 @@ class ImagePreprocessor:
             # Step 2: Convert to float and normalize to [0,1] range
             image = image.astype(float) / 255.0
             self.logger.info(f"Image normalized to range [0,1]: min={image.min():.3f}, max={image.max():.3f}")
+            
+            # Step 3: Apply Gaussian filter for noise reduction
+            gaussian_filtered = np.zeros_like(image)
+            for i in range(image.shape[2]):
+                gaussian_filtered[:,:,i] = cv2.GaussianBlur(image[:,:,i], (5, 5), self.gaussian_sigma)
+            image = gaussian_filtered
+            self.logger.info(f"Applied Gaussian filter with sigma={self.gaussian_sigma}")
 
-            # Step 3: Apply CLAHE contrast enhancement with paper-specified parameters
+            # Step 4: Apply CLAHE contrast enhancement with paper-specified parameters
             image = exposure.equalize_adapthist(image, clip_limit=self.clahe_clip_limit)
             self.logger.info(f"Applied CLAHE with clip_limit={self.clahe_clip_limit}")
 
-            # Step 4: Convert to LAB color space as specified in paper
+            # Step 5: Convert to LAB color space as specified in paper
             image_lab = color.rgb2lab(image)
 
-            # Step 5: Normalize LAB values to [0,1] range as per paper
+            # Step 6: Normalize LAB values to [0,1] range as per paper
             # L channel: [0, 100]
             # a channel: [-128, 127]
             # b channel: [-128, 127]

@@ -1138,6 +1138,14 @@ def train_features(args, logger):
                     new_height = int(image.shape[0] * scale)
                     image = cv2.resize(image, (new_width, new_height))
                 
+                # Apply Gaussian 2D filter for noise reduction (sigma=0.8)
+                # Process each channel separately to preserve color information
+                gaussian_filtered = np.zeros_like(image)
+                for i in range(image.shape[2]):
+                    gaussian_filtered[:,:,i] = cv2.GaussianBlur(image[:,:,i], (5, 5), 0.8)
+                image = gaussian_filtered
+                logger.debug("Applied Gaussian 2D filter with sigma=0.8")
+                
                 # Extract features based on selected feature set
                 if args.feature_set == 'full':
                     # Extract all available features
@@ -1240,6 +1248,9 @@ def train_features(args, logger):
         
         logger.info(f"Training set size: {X_train.shape}, Test set size: {X_test.shape}")
         
+        # Initialize selector to None for later checks
+        selector = None
+        
         # Apply feature selection if specified
         if args.feature_selection != 'none':
             logger.info(f"Applying feature selection: {args.feature_selection}")
@@ -1288,8 +1299,11 @@ def train_features(args, logger):
                     # Just list the first 20 if scores are not available
                     logger.info(f"First 20 selected features: {selected_feature_names[:20]}")
         else:
-            logger.info("Using all features (no feature selection)")
+            logger.info(f"Using all {len(expanded_feature_keys)} features (no feature selection)")
             selected_feature_names = expanded_feature_keys
+            # Create a dummy selector that includes all features for consistency
+            selector = SelectKBest(k='all')
+            selector.fit(X_train, y_train)
         
         # Scale features
         scaler = StandardScaler()
