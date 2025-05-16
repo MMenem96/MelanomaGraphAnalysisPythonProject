@@ -2849,7 +2849,11 @@ def generate_summary_table(results, logger, table_num=1, title="BCC vs SK Detect
         ax.axis('tight')
         ax.axis('off')
         
-        table = ax.table(cellText=perf_df.values.round(2), 
+        # Convert values to strings with 2 decimal places to avoid rounding issues
+        formatted_values = [[f"{val:.2f}" if isinstance(val, (int, float)) else str(val) 
+                           for val in row] for row in perf_df.values]
+        
+        table = ax.table(cellText=formatted_values, 
                         rowLabels=perf_df.index, 
                         colLabels=perf_df.columns, 
                         cellLoc='center',
@@ -2887,7 +2891,11 @@ def generate_summary_table(results, logger, table_num=1, title="BCC vs SK Detect
         ax.axis('tight')
         ax.axis('off')
         
-        table = ax.table(cellText=feat_df.values.round(2), 
+        # Convert values to strings with 2 decimal places to avoid rounding issues
+        formatted_feat_values = [[f"{val:.2f}" if isinstance(val, (int, float)) else str(val) 
+                               for val in row] for row in feat_df.values]
+        
+        table = ax.table(cellText=formatted_feat_values, 
                         rowLabels=feat_df.index, 
                         colLabels=feat_df.columns, 
                         cellLoc='center',
@@ -2921,7 +2929,11 @@ def generate_summary_table(results, logger, table_num=1, title="BCC vs SK Detect
     ax.axis('tight')
     ax.axis('off')
     
-    table = ax.table(cellText=df.values.round(2), 
+    # Convert values to strings with 2 decimal places to avoid rounding issues
+    formatted_all_values = [[f"{val:.2f}" if isinstance(val, (int, float)) else str(val) 
+                          for val in row] for row in df.values]
+    
+    table = ax.table(cellText=formatted_all_values, 
                     rowLabels=df.index, 
                     colLabels=df.columns, 
                     cellLoc='center',
