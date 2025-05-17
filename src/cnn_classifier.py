@@ -3,7 +3,6 @@ CNN-based classifier for BCC vs SK detection.
 This module provides a CNN classifier using TensorFlow/Keras with options
 for both training from scratch and using pretrained models.
 """
-
 import os
 import logging
 import numpy as np
