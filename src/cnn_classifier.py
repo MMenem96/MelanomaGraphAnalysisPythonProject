@@ -8,9 +8,9 @@ import os
 import logging
 import numpy as np
 import tensorflow as tf
-from tensorflow.keras import layers, models, applications
-from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
-from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from keras import layers, models, applications
+from keras.src.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
+from keras.src.legacy.preprocessing.image import ImageDataGenerator
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
 from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
