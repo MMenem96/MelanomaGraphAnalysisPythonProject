@@ -218,6 +218,46 @@ class BCCSKClassifier:
                 n_iter_no_change=20,                # More patience to find better solutions
                 power_t=0.5                         # Learning rate decay for SGD
             )
+        elif classifier_type == 'xgboost':
+            # Import XGBoost
+            from xgboost import XGBClassifier
+            # XGBoost is highly effective for BCC vs SK classification due to its handling of complex feature interactions
+            self.classifier = XGBClassifier(
+                n_estimators=300,                   # Increased from traditional 100 for better pattern recognition
+                max_depth=5,                        # Moderate depth to balance detail capture and overfitting
+                learning_rate=0.05,                 # Lower learning rate for more careful convergence
+                subsample=0.8,                      # Subsample 80% of data for each tree to prevent overfitting
+                colsample_bytree=0.8,               # Consider 80% of features for each tree to improve generalization
+                min_child_weight=3,                 # More conservative to prevent overfitting on small neighborhoods
+                gamma=0.2,                          # Minimum loss reduction for further partition (reduces overfitting)
+                reg_alpha=0.1,                      # L1 regularization to simplify model (helps with high-dim features)
+                reg_lambda=1.5,                     # L2 regularization for stability
+                scale_pos_weight=2.0,               # Adjust for class imbalance (higher for minority BCC class)
+                objective='binary:logistic',        # For binary classification task (BCC vs SK)
+                eval_metric=['logloss', 'auc'],     # Track multiple metrics during training
+                early_stopping_rounds=20,           # Stop if no improvement after 20 rounds
+                random_state=42,
+                use_label_encoder=False,            # Avoid warnings with newer XGBoost versions
+                verbosity=0                         # Reduce output noise
+            )
+        elif classifier_type == 'gradient_boosting':
+            from sklearn.ensemble import GradientBoostingClassifier
+            # Gradient Boosting is effective for medical image classification with tabular features
+            self.classifier = GradientBoostingClassifier(
+                n_estimators=300,                   # Increased for better discrimination capacity
+                learning_rate=0.05,                 # Lower learning rate for stability
+                max_depth=5,                        # Moderate tree depth for capturing complex patterns
+                min_samples_split=5,                # More conservative to prevent overfitting
+                min_samples_leaf=2,                 # More conservative to prevent leaf overfitting
+                subsample=0.8,                      # Use 80% of samples per tree for robust training
+                max_features=0.8,                   # Use 80% of features per tree to improve generalization
+                criterion='friedman_mse',           # Standard criterion for gradient boosting
+                loss='deviance',                    # Log loss for probabilistic output
+                random_state=42,
+                validation_fraction=0.2,            # Use 20% for validation
+                n_iter_no_change=20,                # Stop if no improvement after 20 rounds
+                ccp_alpha=0.001                     # Minimal cost-complexity pruning for stability
+            )
         else:
             raise ValueError(f"Unsupported classifier type: {classifier_type}")
 
@@ -589,6 +629,57 @@ class BCCSKClassifier:
                     'learning_rate_init': [0.001, 0.002, 0.005],
                     'max_iter': [1500, 2000]
                 }
+            elif self.classifier_type == 'xgboost':
+                # Comprehensive hyperparameter grid for XGBoost, with focus on parameters 
+                # that affect model performance for BCC vs SK classification
+                # Adapt grid size based on dataset size
+                if total_samples > 500:
+                    param_grid = {
+                        'n_estimators': [200, 300, 400],
+                        'max_depth': [4, 5, 6],
+                        'learning_rate': [0.03, 0.05, 0.1],
+                        'subsample': [0.7, 0.8, 0.9],
+                        'colsample_bytree': [0.7, 0.8, 0.9],
+                        'min_child_weight': [2, 3, 4],
+                        'gamma': [0.1, 0.2, 0.3],
+                        'reg_alpha': [0.05, 0.1, 0.2],
+                        'reg_lambda': [1.0, 1.5, 2.0],
+                        'scale_pos_weight': [1.0, 2.0, 3.0]
+                    }
+                else:
+                    # For smaller datasets, use fewer parameters to avoid overfitting
+                    param_grid = {
+                        'n_estimators': [200, 300],
+                        'max_depth': [3, 4, 5],
+                        'learning_rate': [0.05, 0.1],
+                        'subsample': [0.8, 0.9],
+                        'min_child_weight': [2, 3],
+                        'scale_pos_weight': [1.5, 2.0]
+                    }
+            elif self.classifier_type == 'gradient_boosting':
+                # Hyperparameter grid for Gradient Boosting, optimized for BCC vs SK classification
+                # Adapt grid size based on dataset size
+                if total_samples > 500:
+                    param_grid = {
+                        'n_estimators': [200, 300, 400],
+                        'max_depth': [4, 5, 6],
+                        'learning_rate': [0.03, 0.05, 0.1],
+                        'subsample': [0.7, 0.8, 0.9],
+                        'min_samples_split': [4, 5, 6],
+                        'min_samples_leaf': [1, 2, 3],
+                        'max_features': [0.7, 0.8, 0.9],
+                        'ccp_alpha': [0.0, 0.001, 0.01]
+                    }
+                else:
+                    # For smaller datasets, use fewer parameters to avoid overfitting
+                    param_grid = {
+                        'n_estimators': [200, 300],
+                        'max_depth': [3, 4, 5],
+                        'learning_rate': [0.05, 0.1],
+                        'subsample': [0.8, 0.9],
+                        'min_samples_split': [4, 5],
+                        'min_samples_leaf': [1, 2]
+                    }
             else:
                 self.logger.warning(f"No hyperparameter grid defined for {self.classifier_type}")
                 return self.classifier
@@ -624,8 +715,12 @@ class BCCSKClassifier:
                     # For MLP, use a very simple network
                     param_grid = {'hidden_layer_sizes': [(10,), (5,)]}
                 elif self.classifier_type == 'xgboost':
-                    # For XGBoost, simplify to avoid overfitting
-                    param_grid = {'max_depth': [2, 3]}
+                    # For XGBoost, simplified parameters for very small datasets
+                    param_grid = {
+                        'max_depth': [2, 3],
+                        'learning_rate': [0.05, 0.1],
+                        'subsample': [0.8]
+                    }
             
             # Create and fit grid search with appropriate settings
             grid_search = GridSearchCV(

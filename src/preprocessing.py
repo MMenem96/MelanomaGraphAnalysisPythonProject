@@ -12,7 +12,7 @@ class ImagePreprocessor:
         self.logger = logging.getLogger(__name__)
         self.target_size = (750, 750)  # Standard size as per paper [52]
         self.clahe_clip_limit = 0.03  # CLAHE parameter from paper
-        self.gaussian_sigma = 0.8  # Gaussian filter sigma for noise reduction
+        self.gaussian_sigma = 0.4  # Reduced Gaussian filter sigma for better balance between noise reduction and feature preservation
 
     def load_image(self, image_path):
         """Load and validate image."""
