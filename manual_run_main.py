@@ -830,9 +830,9 @@ def train(args, logger):
                         f.write(f"Architecture Information:\n")
                         f.write(f"  Model Type: {args.cnn_model}\n")
                         f.write(f"  Input Size: {args.input_size}x{args.input_size}\n")
-                        f.write(f"  Total Parameters: {metrics['NUM_FEATURES']:,d}\n")
-                        f.write(f"  Trainable Parameters: {metrics['NUM_SELECTED']:,d}\n")
-                        f.write(f"  Parameter Reduction: {metrics['FEATURE_REDUCTION']:.2f}%\n\n")
+                        f.write(f"  Total Parameters: {int(metrics['NUM_FEATURES']):,}\n")
+                        f.write(f"  Trainable Parameters: {int(metrics['NUM_SELECTED']):,}\n")
+                        f.write(f"  Parameter Reduction: {float(metrics['FEATURE_REDUCTION']):.2f}%\n\n")
                     
                     f.write(f"Training Configuration:\n")
                     f.write(f"  Batch Size: {batch_size}\n")
