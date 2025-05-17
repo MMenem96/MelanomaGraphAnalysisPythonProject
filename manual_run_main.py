@@ -738,7 +738,7 @@ def train(args, logger):
                     batch_size=batch_size,
                     unfreeze_layers=unfreeze_layers,
                     fine_tune_epochs=fine_tune_epochs,
-                    model_path=model_path,
+                    model_dir=os.path.dirname(model_path),
                     mixup_alpha=args.mixup_alpha
                 )
                 training_time = time.time() - start_training

@@ -5,7 +5,7 @@ Classify or predict: python manual_run_main.py --mode classify --classifiers rf 
 
 
 CNN:
-python manual_run_main.py --mode train --classifier cnn --cnn-model efficient_net --enhanced --epochs 50 --fine-tune-epochs 20 --unfreeze-layers 20 --mixup-alpha 0.3
+python manual_run_main.py --mode train --classifier cnn --cnn-model efficient_net --enhanced --epochs 50 --fine-tune-epochs 20 --unfreeze-layers 20 --mixup-alpha 0.3 --max-images-per-class 30
 
 Feature Extraction without graph:
 python manual_run_main.py --mode train_features --feature_set full --feature_selection mutual_info --feature_classifiers rf,svm_rbf,xgboost --optimize
