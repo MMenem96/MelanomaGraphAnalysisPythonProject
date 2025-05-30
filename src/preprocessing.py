@@ -1,9 +1,11 @@
 import numpy as np
 from PIL import Image
-from skimage import color, exposure
+from skimage import color, exposure, morphology, segmentation, filters
+from scipy import ndimage
 import logging
 import os
 import cv2
+import time
 
 class ImagePreprocessor:
     def __init__(self):
@@ -13,6 +15,11 @@ class ImagePreprocessor:
         self.target_size = (750, 750)  # Standard size as per paper [52]
         self.clahe_clip_limit = 0.03  # CLAHE parameter from paper
         self.gaussian_sigma = 0.4  # Reduced Gaussian filter sigma for better balance between noise reduction and feature preservation
+        
+        # Artifact removal parameters
+        self.hair_removal_enabled = True
+        self.ruler_removal_enabled = True
+        self.artifact_removal_debug = False  # Set to True to save intermediate artifact detection results
 
     def load_image(self, image_path):
         """Load and validate image."""
@@ -58,14 +65,18 @@ class ImagePreprocessor:
             image = image.astype(float) / 255.0
             self.logger.info(f"Image normalized to range [0,1]: min={image.min():.3f}, max={image.max():.3f}")
             
-            # Step 3: Apply Gaussian filter for noise reduction
+            # Step 3: Apply artifact removal before filtering
+            if self.hair_removal_enabled or self.ruler_removal_enabled:
+                image = self.remove_artifacts(image)
+            
+            # Step 4: Apply Gaussian filter for noise reduction
             gaussian_filtered = np.zeros_like(image)
             for i in range(image.shape[2]):
                 gaussian_filtered[:,:,i] = cv2.GaussianBlur(image[:,:,i], (5, 5), self.gaussian_sigma)
             image = gaussian_filtered
             self.logger.info(f"Applied Gaussian filter with sigma={self.gaussian_sigma}")
 
-            # Step 4: Apply CLAHE contrast enhancement with paper-specified parameters
+            # Step 5: Apply CLAHE contrast enhancement with paper-specified parameters
             image = exposure.equalize_adapthist(image, clip_limit=self.clahe_clip_limit)
             self.logger.info(f"Applied CLAHE with clip_limit={self.clahe_clip_limit}")
 
@@ -94,3 +105,216 @@ class ImagePreprocessor:
         except Exception as e:
             self.logger.error(f"Error during preprocessing: {str(e)}")
             raise ValueError(f"Error during preprocessing: {str(e)}")
+
+    def remove_artifacts(self, image):
+        """
+        Remove hair and ruler artifacts from dermoscopic images.
+        
+        Args:
+            image: Input image as numpy array in range [0,1]
+            
+        Returns:
+            Cleaned image with artifacts removed
+        """
+        try:
+            artifacts_removed_count = 0
+            original_image = image.copy()
+            
+            # Convert to uint8 for OpenCV operations
+            image_uint8 = (image * 255).astype(np.uint8)
+            
+            # Hair removal
+            if self.hair_removal_enabled:
+                image_uint8, hair_detected = self.remove_hair_artifacts(image_uint8)
+                if hair_detected:
+                    artifacts_removed_count += 1
+                    self.logger.info("Hair artifacts detected and removed")
+            
+            # Ruler removal
+            if self.ruler_removal_enabled:
+                image_uint8, ruler_detected = self.remove_ruler_artifacts(image_uint8)
+                if ruler_detected:
+                    artifacts_removed_count += 1
+                    self.logger.info("Ruler artifacts detected and removed")
+            
+            # Convert back to float [0,1]
+            cleaned_image = image_uint8.astype(float) / 255.0
+            
+            if artifacts_removed_count > 0:
+                self.logger.info(f"Total artifacts removed: {artifacts_removed_count}")
+            else:
+                self.logger.info("No artifacts detected")
+                
+            return cleaned_image
+            
+        except Exception as e:
+            self.logger.warning(f"Error in artifact removal: {str(e)}. Using original image.")
+            return image
+
+    def remove_hair_artifacts(self, image):
+        """
+        Remove hair artifacts using morphological operations and inpainting.
+        
+        Args:
+            image: Input image as uint8 numpy array
+            
+        Returns:
+            tuple: (processed_image, hair_detected_flag)
+        """
+        try:
+            # Convert to grayscale for hair detection
+            if len(image.shape) == 3:
+                gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+            else:
+                gray = image.copy()
+            
+            # Create kernel for black-hat filtering (detects dark linear structures)
+            kernel_size = 17
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+            
+            # Apply black-hat transform to detect dark linear structures (hair)
+            blackhat = cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, kernel)
+            
+            # Threshold to create binary mask of hair regions
+            _, hair_mask = cv2.threshold(blackhat, 10, 255, cv2.THRESH_BINARY)
+            
+            # Morphological operations to clean up the mask
+            kernel_small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+            hair_mask = cv2.morphologyEx(hair_mask, cv2.MORPH_CLOSE, kernel_small)
+            hair_mask = cv2.morphologyEx(hair_mask, cv2.MORPH_OPEN, kernel_small)
+            
+            # Check if significant hair artifacts were detected
+            hair_pixels = np.sum(hair_mask > 0)
+            total_pixels = hair_mask.shape[0] * hair_mask.shape[1]
+            hair_ratio = hair_pixels / total_pixels
+            
+            hair_detected = hair_ratio > 0.001  # More than 0.1% of image is hair
+            
+            if hair_detected:
+                # Apply inpainting to remove detected hair
+                if len(image.shape) == 3:
+                    # For color images, apply inpainting to each channel
+                    result = image.copy()
+                    for channel in range(3):
+                        result[:,:,channel] = cv2.inpaint(image[:,:,channel], hair_mask, 3, cv2.INPAINT_TELEA)
+                else:
+                    # For grayscale images
+                    result = cv2.inpaint(image, hair_mask, 3, cv2.INPAINT_TELEA)
+                
+                # Optional: Save debug image
+                if self.artifact_removal_debug:
+                    self._save_debug_image(hair_mask, "hair_mask")
+                    
+                return result, True
+            else:
+                return image, False
+                
+        except Exception as e:
+            self.logger.warning(f"Error in hair removal: {str(e)}")
+            return image, False
+
+    def remove_ruler_artifacts(self, image):
+        """
+        Remove ruler and measurement artifacts using edge detection and geometric analysis.
+        
+        Args:
+            image: Input image as uint8 numpy array
+            
+        Returns:
+            tuple: (processed_image, ruler_detected_flag)
+        """
+        try:
+            # Convert to grayscale for edge detection
+            if len(image.shape) == 3:
+                gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+            else:
+                gray = image.copy()
+            
+            # Apply Gaussian blur to reduce noise
+            blurred = cv2.GaussianBlur(gray, (5, 5), 1.0)
+            
+            # Edge detection using Canny
+            edges = cv2.Canny(blurred, 50, 150, apertureSize=3)
+            
+            # Detect lines using Hough transform
+            lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=100, 
+                                   minLineLength=100, maxLineGap=10)
+            
+            ruler_detected = False
+            ruler_mask = np.zeros(gray.shape, dtype=np.uint8)
+            
+            if lines is not None and len(lines) > 0:
+                # Analyze detected lines for ruler characteristics
+                long_lines = []
+                for line in lines:
+                    x1, y1, x2, y2 = line[0]
+                    length = np.sqrt((x2-x1)**2 + (y2-y1)**2)
+                    
+                    # Check for long straight lines (potential rulers)
+                    if length > 200:  # Minimum length for ruler consideration
+                        # Check if line is mostly horizontal or vertical
+                        angle = np.abs(np.arctan2(y2-y1, x2-x1) * 180 / np.pi)
+                        if angle < 10 or angle > 170 or (80 < angle < 100):  # Horizontal or vertical
+                            long_lines.append(line[0])
+                
+                # If we found potential ruler lines, create mask
+                if len(long_lines) > 0:
+                    ruler_detected = True
+                    
+                    for line in long_lines:
+                        x1, y1, x2, y2 = line
+                        # Create thick line mask (rulers have width)
+                        cv2.line(ruler_mask, (x1, y1), (x2, y2), 255, thickness=15)
+                    
+                    # Morphological operations to expand ruler mask
+                    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+                    ruler_mask = cv2.morphologyEx(ruler_mask, cv2.MORPH_DILATE, kernel)
+            
+            # Additional check for text/numbers (common on rulers)
+            # Look for high-contrast rectangular regions
+            contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            for contour in contours:
+                area = cv2.contourArea(contour)
+                if 100 < area < 2000:  # Text-sized regions
+                    x, y, w, h = cv2.boundingRect(contour)
+                    aspect_ratio = w / h
+                    
+                    # Check for text-like rectangles
+                    if 0.2 < aspect_ratio < 5.0:  # Text aspect ratios
+                        cv2.rectangle(ruler_mask, (x-5, y-5), (x+w+5, y+h+5), 255, -1)
+                        ruler_detected = True
+            
+            if ruler_detected:
+                # Apply inpainting to remove detected ruler artifacts
+                if len(image.shape) == 3:
+                    result = image.copy()
+                    for channel in range(3):
+                        result[:,:,channel] = cv2.inpaint(image[:,:,channel], ruler_mask, 5, cv2.INPAINT_TELEA)
+                else:
+                    result = cv2.inpaint(image, ruler_mask, 5, cv2.INPAINT_TELEA)
+                
+                # Optional: Save debug image
+                if self.artifact_removal_debug:
+                    self._save_debug_image(ruler_mask, "ruler_mask")
+                    
+                return result, True
+            else:
+                return image, False
+                
+        except Exception as e:
+            self.logger.warning(f"Error in ruler removal: {str(e)}")
+            return image, False
+
+    def _save_debug_image(self, mask, artifact_type):
+        """Save debug images for artifact detection analysis."""
+        try:
+            debug_dir = "artifact_debug"
+            os.makedirs(debug_dir, exist_ok=True)
+            
+            timestamp = int(time.time())
+            filename = f"{debug_dir}/{artifact_type}_{timestamp}.png"
+            cv2.imwrite(filename, mask)
+            self.logger.debug(f"Saved debug image: {filename}")
+            
+        except Exception as e:
+            self.logger.warning(f"Could not save debug image: {str(e)}")

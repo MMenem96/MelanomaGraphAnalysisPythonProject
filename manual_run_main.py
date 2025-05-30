@@ -1180,7 +1180,7 @@ def train_features(args, logger):
         # Start timer
         start_time = time.time()
         
-        logger.info("Starting conventional feature engineering-based training")
+        logger.info("Starting conventional feature engineering-based training WITH ARTIFACT REMOVAL")
         logger.info(f"Feature set: {args.feature_set}, Selection method: {args.feature_selection}")
         
         # Load image paths
@@ -1243,6 +1243,28 @@ def train_features(args, logger):
                     new_width = int(image.shape[1] * scale)
                     new_height = int(image.shape[0] * scale)
                     image = cv2.resize(image, (new_width, new_height))
+                
+                # Step 0: Apply advanced artifact removal (hair and ruler detection/removal)
+                # Convert to float [0,1] for artifact removal processing
+                image_float = image.astype(float) / 255.0
+                
+                # Initialize artifact removal system with same parameters as train mode
+                from src.preprocessing import ImagePreprocessor
+                artifact_remover = ImagePreprocessor()
+                artifact_remover.hair_removal_enabled = True
+                artifact_remover.ruler_removal_enabled = True
+                artifact_remover.artifact_removal_debug = False  # Set to True for debugging
+                
+                # Apply artifact removal
+                try:
+                    image_float_cleaned = artifact_remover.remove_artifacts(image_float)
+                    # Convert back to uint8 [0,255] for subsequent processing
+                    image = (image_float_cleaned * 255).astype(np.uint8)
+                    logger.debug("Applied advanced artifact removal (hair and ruler detection)")
+                except Exception as e:
+                    logger.warning(f"Artifact removal failed for {image_path}: {str(e)}. Using original image.")
+                    # Continue with original image if artifact removal fails
+                    pass
                 
                 # Apply lesion segmentation for Region of Interest (ROI) extraction
                 def segment_lesion_advanced_hsv(img):
