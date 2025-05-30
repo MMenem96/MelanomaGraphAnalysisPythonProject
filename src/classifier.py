@@ -467,7 +467,7 @@ class BCCSKClassifier:
 
     def select_features(self, X, y, method='mutual_info', n_features=100):
         """
-        MODIFIED: This version uses all features with no feature selection to avoid information loss.
+        MODIFIED: This version uses all features with robust preprocessing to handle numerical issues.
         
         Args:
             X: Feature matrix
@@ -476,21 +476,35 @@ class BCCSKClassifier:
             n_features: Not used - keeping all features
             
         Returns:
-            X: Original feature matrix with constant features removed
+            X: Preprocessed feature matrix with constant features and extreme values handled
         """
         try:
             original_n_features = X.shape[1]
-            self.logger.info(f"FEATURE SELECTION DISABLED: Using all {original_n_features} features")
+            self.logger.info(f"Using all {original_n_features} features with robust preprocessing")
             
-            # We still need to check and remove constant features that cause warnings
-            # Find columns where all values are the same (constant features)
+            # Step 1: Handle infinite values
+            X = np.where(np.isinf(X), 0, X)
+            
+            # Step 2: Handle NaN values
+            X = np.nan_to_num(X, nan=0.0, posinf=1e10, neginf=-1e10)
+            
+            # Step 3: Clip extreme values to prevent numerical instability
+            # Use robust percentile-based clipping
+            for i in range(X.shape[1]):
+                col = X[:, i]
+                if np.std(col) > 0:  # Only process non-constant columns
+                    q99 = np.percentile(col, 99)
+                    q1 = np.percentile(col, 1)
+                    # Clip extreme outliers
+                    X[:, i] = np.clip(col, q1 - 3 * (q99 - q1), q99 + 3 * (q99 - q1))
+            
+            # Step 4: Remove constant features
             variance = np.var(X, axis=0)
-            non_constant_features = variance > 1e-10  # Small threshold for numerical precision
+            non_constant_features = variance > 1e-12  # Very small threshold for numerical precision
             
             if not all(non_constant_features):
                 constant_indices = np.where(~non_constant_features)[0]
-                self.logger.warning(f"Found {len(constant_indices)} constant features at indices {constant_indices}")
-                self.logger.info("Removing constant features to avoid warnings")
+                self.logger.info(f"Removing {len(constant_indices)} constant features: {constant_indices}")
                 
                 # Only keep non-constant features
                 X = X[:, non_constant_features]
@@ -499,21 +513,13 @@ class BCCSKClassifier:
                 if X.shape[1] == 0:
                     self.logger.warning("All features are constant! Cannot proceed.")
                     return np.zeros((X.shape[0], 0))
-                
-                # Create a selector that includes all non-constant features
-                selected_indices = np.arange(X.shape[1])
-                self.feature_selector = PicklableSelectKBest(
-                    k=len(selected_indices),
-                    selected_indices=selected_indices,
-                    n_features=X.shape[1]
-                )
-                self.feature_selector.fit(X, y)
-                
-                # Log total features after removing constant ones
-                self.logger.info(f"Using {X.shape[1]} features after removing {len(constant_indices)} constant features")
-                return X
             
-            # If no constant features found, use all features
+            # Step 5: Final validation - ensure no remaining numerical issues
+            if np.any(np.isnan(X)) or np.any(np.isinf(X)):
+                self.logger.warning("Found remaining NaN/inf values after preprocessing - replacing with zeros")
+                X = np.nan_to_num(X, nan=0.0, posinf=1e10, neginf=-1e10)
+            
+            # Create a selector that includes all remaining features
             selected_indices = np.arange(X.shape[1])
             self.feature_selector = PicklableSelectKBest(
                 k=len(selected_indices),
@@ -560,11 +566,18 @@ class BCCSKClassifier:
                     }
                 else:
                     param_grid = {
-                        'C': [5, 10, 50, 100, 200],
-                        'gamma': ['scale', 0.01, 0.001],
+                        'C': [0.1, 1.0, 10.0, 50.0],  # More conservative C values
+                        'gamma': ['scale', 'auto', 0.001, 0.01],
                         'kernel': ['rbf'],
-                        'class_weight': ['balanced', {0: 1.5, 1: 1}, {0: 2, 1: 1}, {0: 3, 1: 1}]
+                        'class_weight': ['balanced']
                     }
+            elif self.classifier_type == 'svm_linear':
+                param_grid = {
+                    'C': [0.01, 0.1, 1.0, 10.0],  # Lower C values for numerical stability
+                    'kernel': ['linear'],
+                    'class_weight': ['balanced'],
+                    'max_iter': [10000]  # Increased iterations for convergence
+                }
             elif self.classifier_type == 'svm_sigmoid':
                 param_grid = {
                     'C': [5, 10, 50, 100, 200],
@@ -796,13 +809,19 @@ class BCCSKClassifier:
                 self.logger.warning("NaN values found in input features. Replacing with zeros.")
                 X = np.nan_to_num(X, nan=0.0)
                 
-            # Scale features
+            # Use robust scaling for better numerical stability
+            from sklearn.preprocessing import RobustScaler
+            # RobustScaler is less sensitive to outliers than StandardScaler
+            self.scaler = RobustScaler()
             X_scaled = self.scaler.fit_transform(X)
             
-            # Double-check for NaN values after scaling (some scalers can introduce NaNs)
-            if np.isnan(X_scaled).any():
-                self.logger.warning("NaN values found after scaling. Replacing with zeros.")
-                X_scaled = np.nan_to_num(X_scaled, nan=0.0)
+            # Double-check for NaN/inf values after scaling
+            if np.isnan(X_scaled).any() or np.isinf(X_scaled).any():
+                self.logger.warning("NaN/inf values found after scaling. Applying robust cleaning.")
+                X_scaled = np.nan_to_num(X_scaled, nan=0.0, posinf=1e10, neginf=-1e10)
+                
+            # Final clipping to prevent extreme values that cause SVM issues
+            X_scaled = np.clip(X_scaled, -10, 10)
             
             # Define scoring metrics with zero_division=0 for very small datasets
             # This prevents warnings and errors when a fold has no positive samples
