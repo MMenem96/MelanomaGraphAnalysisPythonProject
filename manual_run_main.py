@@ -1435,7 +1435,12 @@ def train_features(args, logger):
         
         # Prepare classifiers based on user selection
         classifiers = {}
-        requested_classifiers = args.feature_classifiers.lower().split(',')
+        
+        # Handle 'all' option for feature classifiers
+        if args.feature_classifiers.lower() == 'all':
+            requested_classifiers = ['rf', 'svm_rbf', 'svm_linear', 'knn', 'mlp', 'gb', 'logistic', 'xgboost']
+        else:
+            requested_classifiers = args.feature_classifiers.lower().split(',')
         
         for clf_name in requested_classifiers:
             if clf_name == 'rf':
