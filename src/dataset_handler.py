@@ -126,8 +126,18 @@ class DatasetHandler:
                             preprocessed_filename = f"{original_filename}_preprocessed_{class_name.upper()}.jpg"
                             preprocessed_path = os.path.join(preprocessed_dir, preprocessed_filename)
                             
+                            # Ensure image is in correct format for OpenCV
+                            if processed_image.dtype != np.uint8:
+                                # Convert to uint8 format (0-255 range)
+                                if processed_image.max() <= 1.0:
+                                    processed_image_uint8 = (processed_image * 255).astype(np.uint8)
+                                else:
+                                    processed_image_uint8 = processed_image.astype(np.uint8)
+                            else:
+                                processed_image_uint8 = processed_image
+                            
                             # Convert from RGB to BGR for OpenCV
-                            processed_image_bgr = cv2.cvtColor(processed_image, cv2.COLOR_RGB2BGR)
+                            processed_image_bgr = cv2.cvtColor(processed_image_uint8, cv2.COLOR_RGB2BGR)
                             cv2.imwrite(preprocessed_path, processed_image_bgr)
                             
                             saved_count[class_name] += 1
@@ -166,6 +176,10 @@ class DatasetHandler:
                             # Save superpixel image
                             superpixel_filename = f"{original_filename}_superpixel_{class_name.upper()}.jpg"
                             superpixel_path = os.path.join(superpixel_dir, superpixel_filename)
+                            
+                            # Ensure superpixel image is in correct format for OpenCV
+                            if superpixel_image.dtype != np.uint8:
+                                superpixel_image = superpixel_image.astype(np.uint8)
                             
                             # Convert from RGB to BGR for OpenCV
                             superpixel_image_bgr = cv2.cvtColor(superpixel_image, cv2.COLOR_RGB2BGR)
