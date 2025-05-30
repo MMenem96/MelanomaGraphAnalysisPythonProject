@@ -155,6 +155,9 @@ def parse_args():
                         help='Comma-separated list of classifiers to train with feature engineering')
     parser.add_argument('--optimize', action='store_true',
                         help='Perform hyperparameter optimization for feature-based classifiers')
+    
+    parser.add_argument('--apply-mask', action='store_true',
+                        help='Apply lesion segmentation masking during preprocessing')
 
     return parser.parse_args()
 
@@ -1116,6 +1119,15 @@ def train_features(args, logger):
         # Initialize the feature extractor
         feature_extractor = ConventionalFeatureExtractor()
         
+        # Create directory for saving preprocessed images
+        preprocessed_dir = "preprocessed_images"
+        os.makedirs(preprocessed_dir, exist_ok=True)
+        
+        # Track saved images for sampling
+        saved_bcc_count = 0
+        saved_sk_count = 0
+        max_samples_per_class = 5
+        
         # Extract features from all images
         logger.info("Extracting features from images...")
         features_list = []
@@ -1138,13 +1150,109 @@ def train_features(args, logger):
                     new_height = int(image.shape[0] * scale)
                     image = cv2.resize(image, (new_width, new_height))
                 
-                # Apply Gaussian 2D filter for noise reduction (sigma=0.8)
+                # Apply lesion segmentation for Region of Interest (ROI) extraction
+                def segment_lesion_advanced_hsv(img):
+                    """Enhanced lesion segmentation for dermoscopic images using multiple approaches."""
+                    # Convert to different color spaces for robust lesion detection
+                    hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
+                    lab = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
+                    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+                    
+                    # Method 1: Dark lesion detection in grayscale
+                    # Use Otsu's thresholding to separate dark lesions from lighter skin
+                    _, otsu_mask = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+                    
+                    # Method 2: LAB color space - detect darker regions in L channel
+                    l_channel = lab[:,:,0]
+                    # Use adaptive threshold to handle varying lighting
+                    adaptive_mask = cv2.adaptiveThreshold(l_channel, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+                                                        cv2.THRESH_BINARY_INV, 15, 10)
+                    
+                    # Method 3: HSV-based detection for pigmented lesions
+                    # Focus on low value (dark) regions regardless of hue/saturation
+                    hsv_mask = cv2.inRange(hsv, np.array([0, 0, 0]), np.array([179, 255, 120]))
+                    
+                    # Combine all methods - lesion should be detected by at least one method
+                    combined_mask = cv2.bitwise_or(otsu_mask, adaptive_mask)
+                    combined_mask = cv2.bitwise_or(combined_mask, hsv_mask)
+                    
+                    # Advanced morphological cleaning
+                    # Remove small noise
+                    kernel_small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+                    combined_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_OPEN, kernel_small)
+                    
+                    # Fill holes and smooth boundaries
+                    kernel_large = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
+                    combined_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_CLOSE, kernel_large)
+                    
+                    # Keep only the largest connected component (main lesion)
+                    contours, _ = cv2.findContours(combined_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    if contours:
+                        # Find the largest contour (main lesion)
+                        largest_contour = max(contours, key=cv2.contourArea)
+                        lesion_mask = np.zeros_like(combined_mask)
+                        cv2.fillPoly(lesion_mask, [largest_contour], 255)
+                    else:
+                        # Fallback: if no contours found, use center region
+                        lesion_mask = np.zeros_like(combined_mask)
+                        h, w = lesion_mask.shape
+                        center_y, center_x = h//2, w//2
+                        radius = min(h, w) // 4
+                        cv2.circle(lesion_mask, (center_x, center_y), radius, 255, -1)
+                    
+                    return lesion_mask.astype(bool)
+                
+                # Step 1: Apply Gaussian 2D filter for noise reduction (sigma=0.8)
                 # Process each channel separately to preserve color information
                 gaussian_filtered = np.zeros_like(image)
                 for i in range(image.shape[2]):
                     gaussian_filtered[:,:,i] = cv2.GaussianBlur(image[:,:,i], (5, 5), 0.8)
                 image = gaussian_filtered
-                logger.debug("Applied Gaussian 2D filter with sigma=0.8")
+                
+                # Step 2: Optionally apply lesion segmentation masking
+                if args.apply_mask:
+                    # Segment lesion ROI (on Gaussian filtered image)
+                    lesion_mask = segment_lesion_advanced_hsv(image)
+                    lesion_area_ratio = np.sum(lesion_mask) / (image.shape[0] * image.shape[1])
+                    logger.debug(f"Lesion segmentation completed. ROI covers {lesion_area_ratio:.1%} of image")
+                    
+                    # Apply lesion mask to focus on Region of Interest
+                    masked_image = image.copy()
+                    masked_image[~lesion_mask] = [128, 128, 128]  # Gray background for non-lesion areas
+                    image = masked_image
+                    
+                    logger.debug("Applied Gaussian 2D filter with sigma=0.8 and lesion ROI masking")
+                else:
+                    logger.debug("Applied Gaussian 2D filter with sigma=0.8 (no masking)")
+                
+                # Save first 5 preprocessed images from each class for visualization
+                current_label = all_labels[idx]
+                image_filename = os.path.basename(image_path)
+                # Remove file extension from original name
+                original_name = os.path.splitext(image_filename)[0]
+                class_name = "BCC" if current_label == 1 else "SK"
+                
+                if (current_label == 1 and saved_bcc_count < max_samples_per_class) or \
+                   (current_label == 0 and saved_sk_count < max_samples_per_class):
+                    
+                    # Convert image back to BGR for saving with OpenCV
+                    image_bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+                    
+                    # Create filename with class prefix and original name
+                    sample_number = saved_bcc_count + 1 if current_label == 1 else saved_sk_count + 1
+                    save_filename = f"{class_name}_{sample_number}_preprocessed_{original_name}.jpg"
+                    save_path = os.path.join(preprocessed_dir, save_filename)
+                    
+                    # Save preprocessed image
+                    cv2.imwrite(save_path, image_bgr)
+                    
+                    # Update counters
+                    if current_label == 1:
+                        saved_bcc_count += 1
+                        logger.info(f"Saved preprocessed BCC image: {save_filename}")
+                    else:
+                        saved_sk_count += 1
+                        logger.info(f"Saved preprocessed SK image: {save_filename}")
                 
                 # Extract features based on selected feature set
                 if args.feature_set == 'full':
@@ -1206,6 +1314,21 @@ def train_features(args, logger):
         
         expanded_feature_keys = sorted(expanded_feature_keys)
         logger.info(f"Total number of extracted features (after expansion): {len(expanded_feature_keys)}")
+        
+        # Save feature names to file for reference
+        feature_names_file = os.path.join(preprocessed_dir, "extracted_feature_names.txt")
+        with open(feature_names_file, 'w') as f:
+            f.write(f"Feature Extraction Configuration:\n")
+            f.write(f"Feature Set: {args.feature_set}\n")
+            f.write(f"Feature Selection: {args.feature_selection}\n")
+            f.write(f"Total Features: {len(expanded_feature_keys)}\n")
+            f.write(f"Extraction Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+            f.write("Complete List of Extracted Features:\n")
+            f.write("=" * 50 + "\n")
+            for i, feature_name in enumerate(expanded_feature_keys, 1):
+                f.write(f"{i:4d}. {feature_name}\n")
+        
+        logger.info(f"Feature names saved to: {feature_names_file}")
         
         # Create feature matrix with expanded features
         X = np.zeros((len(features_list), len(expanded_feature_keys)))

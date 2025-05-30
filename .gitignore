@@ -2,6 +2,7 @@
 data/
 output/
 model/
+preprocessed_images/
 
 # Ignore Python virtual environment
 .venv/
