@@ -59,6 +59,10 @@ CLASSIFIERS = {
         'class': SVC,
         'params': {'kernel': 'poly', 'C': 1.0, 'degree': 3, 'gamma': 'scale', 'probability': True, 'random_state': 42}
     },
+    'SVM (Linear)': {
+        'class': SVC,
+        'params': {'kernel': 'linear', 'C': 1.0, 'probability': True, 'random_state': 42}
+    },
     'RF': {
         'class': RandomForestClassifier,
         'params': {'n_estimators': 100, 'max_depth': 10, 'random_state': 42}
@@ -71,6 +75,18 @@ CLASSIFIERS = {
     'KNN': {
         'class': KNeighborsClassifier,
         'params': {'n_neighbors': 5, 'weights': 'distance', 'algorithm': 'auto', 'p': 2}
+    },
+    'Gradient Boosting': {
+        'class': GradientBoostingClassifier,
+        'params': {'n_estimators': 100, 'learning_rate': 0.1, 'max_depth': 3, 'random_state': 42}
+    },
+    'Logistic Regression': {
+        'class': LogisticRegression,
+        'params': {'max_iter': 1000, 'random_state': 42, 'solver': 'lbfgs'}
+    },
+    'XGBoost': {
+        'class': XGBClassifier,
+        'params': {'n_estimators': 100, 'random_state': 42, 'base_score': 0.5, 'eval_metric': 'logloss'}
     }
 }
 
@@ -239,9 +255,13 @@ def train(args, logger):
                 'svm_rbf': 'SVM (RBF)',
                 'svm_sigmoid': 'SVM (Sigmoid)',
                 'svm_poly': 'SVM (Poly)',
+                'svm_linear': 'SVM (Linear)',
                 'knn': 'KNN',
                 'mlp': 'MLP',
-                'rf': 'RF'
+                'rf': 'RF',
+                'gb': 'Gradient Boosting',
+                'logistic': 'Logistic Regression',
+                'xgboost': 'XGBoost'
             }
 
             for clf_name in args.classifiers.split(','):
@@ -266,17 +286,79 @@ def train(args, logger):
 
         # Process data and train traditional classifiers if needed
         if include_traditional:
+            # Create directory for saving preprocessed images with graph features
+            preprocessed_dir = "preprocessed_images_with_graph"
+            os.makedirs(preprocessed_dir, exist_ok=True)
+            
             # Process dataset for graph-based features
             logger.info(f"Processing dataset from {args.bcc_dir} and {args.sk_dir}")
             graphs, labels = dataset_handler.process_dataset(
                 args.bcc_dir,
-                args.sk_dir
+                args.sk_dir,
+                save_preprocessed_images=True,
+                preprocessed_dir=preprocessed_dir
             )
 
             # Save feature matrix for analysis
             logger.info("Creating and saving feature matrix...")
             feature_matrix = dataset_handler.save_feature_matrix(graphs, labels)
             logger.info(f"Feature matrix shape: {feature_matrix.shape}")
+            
+            # Extract and save feature names for documentation
+            if graphs:
+                logger.info("Extracting and documenting graph-based feature names...")
+                graph_features = []
+                sample_graph = graphs[0]
+                
+                # Graph-based features
+                if hasattr(sample_graph, 'graph') and 'features' in sample_graph.graph:
+                    for feature_name in sample_graph.graph['features'].keys():
+                        graph_features.append(f"Graph_{feature_name}")
+                
+                # Conventional features
+                if hasattr(sample_graph, 'graph') and 'conventional_features' in sample_graph.graph:
+                    conv_features = sample_graph.graph['conventional_features']
+                    for feature_name in conv_features.keys():
+                        if isinstance(conv_features[feature_name], (list, np.ndarray)):
+                            # For array features, create individual feature names
+                            feature_array = conv_features[feature_name]
+                            if hasattr(feature_array, '__len__'):
+                                for i in range(len(feature_array)):
+                                    graph_features.append(f"Conv_{feature_name}_{i}")
+                        else:
+                            graph_features.append(f"Conv_{feature_name}")
+                
+                # Dermoscopic features
+                if hasattr(sample_graph, 'graph') and 'dermoscopic_features' in sample_graph.graph:
+                    dermo_features = sample_graph.graph['dermoscopic_features']
+                    for feature_name in dermo_features.keys():
+                        if isinstance(dermo_features[feature_name], (list, np.ndarray)):
+                            # For array features, create individual feature names
+                            feature_array = dermo_features[feature_name]
+                            if hasattr(feature_array, '__len__'):
+                                for i in range(len(feature_array)):
+                                    graph_features.append(f"Dermo_{feature_name}_{i}")
+                        else:
+                            graph_features.append(f"Dermo_{feature_name}")
+                
+                # Save feature names to file
+                feature_names_path = os.path.join(preprocessed_dir, "extracted_feature_names.txt")
+                with open(feature_names_path, 'w') as f:
+                    f.write("Graph-Based Feature Extraction - Feature Names Documentation\n")
+                    f.write("=" * 60 + "\n\n")
+                    f.write(f"Total number of features: {len(graph_features)}\n")
+                    f.write(f"Feature matrix shape: {feature_matrix.shape}\n\n")
+                    f.write("Feature Categories:\n")
+                    f.write("- Graph_*: Graph topology and structure features\n")
+                    f.write("- Conv_*: Conventional image features (color, texture, morphology)\n")
+                    f.write("- Dermo_*: Dermoscopic pattern features\n\n")
+                    f.write("Complete Feature List:\n")
+                    f.write("-" * 30 + "\n")
+                    for i, feature_name in enumerate(graph_features, 1):
+                        f.write(f"{i:3d}. {feature_name}\n")
+                
+                logger.info(f"Feature names documentation saved to: {feature_names_path}")
+                logger.info(f"Total graph-based features documented: {len(graph_features)}")
 
             # Split dataset
             train_graphs, test_graphs, train_labels, test_labels = dataset_handler.split_dataset(
@@ -319,6 +401,9 @@ def train(args, logger):
                 elif classifier_name == 'SVM (Poly)':
                     model_dir_name = 'SVM_Poly'
                     classifier_type = 'svm_poly'
+                elif classifier_name == 'SVM (Linear)':
+                    model_dir_name = 'SVM_Linear'
+                    classifier_type = 'svm_linear'
                 elif classifier_name == 'RF':
                     model_dir_name = 'RF'
                     classifier_type = 'rf'
@@ -328,6 +413,15 @@ def train(args, logger):
                 elif classifier_name == 'MLP':
                     model_dir_name = 'MLP'
                     classifier_type = 'mlp'
+                elif classifier_name == 'Gradient Boosting':
+                    model_dir_name = 'Gradient_Boosting'
+                    classifier_type = 'gradient_boosting'
+                elif classifier_name == 'Logistic Regression':
+                    model_dir_name = 'Logistic_Regression'
+                    classifier_type = 'logistic'
+                elif classifier_name == 'XGBoost':
+                    model_dir_name = 'XGBoost'
+                    classifier_type = 'xgboost'
                 else:
                     model_dir_name = classifier_name.replace(' ', '_').replace('(', '').replace(')', '')
                     classifier_type = model_dir_name.lower()
