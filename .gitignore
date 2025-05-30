@@ -4,7 +4,7 @@ output/
 model/
 preprocessed_images/
 preprocessed_images_with_graph/
-preprocessed_superpixel_images_with_graph/
+preprocess_superpixel_images_with_graph/
 
 # Ignore Python virtual environment
 .venv/
