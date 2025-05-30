@@ -19,6 +19,7 @@ class ImagePreprocessor:
         # Artifact removal parameters
         self.hair_removal_enabled = True
         self.ruler_removal_enabled = True
+        self.bubble_removal_enabled = True
         self.artifact_removal_debug = False  # Set to True to save intermediate artifact detection results
 
     def load_image(self, image_path):
@@ -108,7 +109,7 @@ class ImagePreprocessor:
 
     def remove_artifacts(self, image):
         """
-        Remove hair and ruler artifacts from dermoscopic images.
+        Remove hair, ruler, and bubble artifacts from dermoscopic images.
         
         Args:
             image: Input image as numpy array in range [0,1]
@@ -128,22 +129,29 @@ class ImagePreprocessor:
                 image_uint8, hair_detected = self.remove_hair_artifacts(image_uint8)
                 if hair_detected:
                     artifacts_removed_count += 1
-                    self.logger.info("Hair artifacts detected and removed")
+                    # self.logger.info("Hair artifacts detected and removed")
             
             # Ruler removal
             if self.ruler_removal_enabled:
                 image_uint8, ruler_detected = self.remove_ruler_artifacts(image_uint8)
                 if ruler_detected:
                     artifacts_removed_count += 1
-                    self.logger.info("Ruler artifacts detected and removed")
+                    # self.logger.info("Ruler artifacts detected and removed")
+            
+            # Bubble removal
+            if self.bubble_removal_enabled:
+                image_uint8, bubble_detected = self.remove_bubble_artifacts(image_uint8)
+                if bubble_detected:
+                    artifacts_removed_count += 1
+                    # self.logger.info("Bubble artifacts detected and removed")
             
             # Convert back to float [0,1]
             cleaned_image = image_uint8.astype(float) / 255.0
             
-            if artifacts_removed_count > 0:
-                self.logger.info(f"Total artifacts removed: {artifacts_removed_count}")
-            else:
-                self.logger.info("No artifacts detected")
+            # if artifacts_removed_count > 0:
+            #     self.logger.info(f"Total artifacts removed: {artifacts_removed_count}")
+            # else:
+            #     self.logger.info("No artifacts detected")
                 
             return cleaned_image
             
@@ -303,6 +311,104 @@ class ImagePreprocessor:
                 
         except Exception as e:
             self.logger.warning(f"Error in ruler removal: {str(e)}")
+            return image, False
+
+    def remove_bubble_artifacts(self, image):
+        """
+        Remove bubble artifacts using circular Hough transform detection.
+        
+        Args:
+            image: Input image as uint8 numpy array
+            
+        Returns:
+            tuple: (processed_image, bubble_detected_flag)
+        """
+        try:
+            bubble_detected = False
+            result = image.copy()
+            
+            # Convert to grayscale for bubble detection
+            if len(image.shape) == 3:
+                gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+            else:
+                gray = image.copy()
+            
+            # Create bubble mask
+            bubble_mask = np.zeros(gray.shape, dtype=np.uint8)
+            
+            # Apply Gaussian blur to reduce noise for circle detection
+            blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+            
+            # Detect circles using HoughCircles
+            # Parameters tuned for dermoscopic bubble detection
+            circles = cv2.HoughCircles(
+                blurred,
+                cv2.HOUGH_GRADIENT,
+                dp=1,                    # Inverse ratio of accumulator resolution
+                minDist=30,              # Minimum distance between circle centers
+                param1=50,               # Upper threshold for edge detection
+                param2=30,               # Accumulator threshold for center detection
+                minRadius=5,             # Minimum circle radius
+                maxRadius=100            # Maximum circle radius
+            )
+            
+            if circles is not None:
+                circles = np.round(circles[0, :]).astype("int")
+                
+                for (x, y, r) in circles:
+                    # Validate circle is within image bounds
+                    if (x-r >= 0 and y-r >= 0 and 
+                        x+r < image.shape[1] and y+r < image.shape[0]):
+                        
+                        # Check if this region looks like a bubble
+                        # Bubbles are typically bright, circular regions
+                        roi = gray[y-r:y+r, x-r:x+r]
+                        if roi.size > 0:
+                            mean_intensity = np.mean(roi)
+                            # Bubbles are usually brighter than surrounding skin
+                            if mean_intensity > 140:  # Bright regions
+                                # Add to bubble mask with some padding
+                                cv2.circle(bubble_mask, (x, y), r+5, 255, -1)
+                                bubble_detected = True
+            
+            # Additional detection: Look for bright oval/circular regions
+            # using morphological operations
+            _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
+            
+            # Find contours of bright regions
+            contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            for contour in contours:
+                area = cv2.contourArea(contour)
+                if 50 < area < 5000:  # Bubble-sized areas
+                    # Check if contour is roughly circular
+                    perimeter = cv2.arcLength(contour, True)
+                    if perimeter > 0:
+                        circularity = 4 * np.pi * area / (perimeter * perimeter)
+                        # Values close to 1.0 indicate circular shapes
+                        if circularity > 0.6:  # Reasonably circular
+                            cv2.fillPoly(bubble_mask, [contour], 255)
+                            bubble_detected = True
+            
+            if bubble_detected:
+                # Apply inpainting to remove detected bubbles
+                if len(image.shape) == 3:
+                    result = image.copy()
+                    for channel in range(3):
+                        result[:,:,channel] = cv2.inpaint(image[:,:,channel], bubble_mask, 3, cv2.INPAINT_TELEA)
+                else:
+                    result = cv2.inpaint(image, bubble_mask, 3, cv2.INPAINT_TELEA)
+                
+                # Optional: Save debug image
+                if self.artifact_removal_debug:
+                    self._save_debug_image(bubble_mask, "bubble_mask")
+                    
+                return result, True
+            else:
+                return image, False
+                
+        except Exception as e:
+            self.logger.warning(f"Error in bubble removal: {str(e)}")
             return image, False
 
     def _save_debug_image(self, mask, artifact_type):

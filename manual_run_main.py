@@ -1253,6 +1253,7 @@ def train_features(args, logger):
                 artifact_remover = ImagePreprocessor()
                 artifact_remover.hair_removal_enabled = True
                 artifact_remover.ruler_removal_enabled = True
+                artifact_remover.bubble_removal_enabled = True
                 artifact_remover.artifact_removal_debug = False  # Set to True for debugging
                 
                 # Apply artifact removal
