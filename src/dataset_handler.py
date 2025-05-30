@@ -114,6 +114,25 @@ class DatasetHandler:
                     original_image = self.preprocessor.load_image(image_path)
                     processed_image = self.preprocessor.preprocess(original_image)
                     
+                    # Save basic preprocessed images if requested (first 5 per class)
+                    if save_preprocessed_images and preprocessed_dir and saved_count:
+                        class_name = 'bcc' if class_label == 1 else 'sk'
+                        if saved_count[class_name] < 5:
+                            # Get original filename without extension
+                            original_filename = os.path.splitext(os.path.basename(image_path))[0]
+                            
+                            # Save preprocessed image with original filename
+                            import cv2
+                            preprocessed_filename = f"{original_filename}_preprocessed_{class_name.upper()}.jpg"
+                            preprocessed_path = os.path.join(preprocessed_dir, preprocessed_filename)
+                            
+                            # Convert from RGB to BGR for OpenCV
+                            processed_image_bgr = cv2.cvtColor(processed_image, cv2.COLOR_RGB2BGR)
+                            cv2.imwrite(preprocessed_path, processed_image_bgr)
+                            
+                            saved_count[class_name] += 1
+                            self.logger.info(f"Saved preprocessed image: {preprocessed_filename}")
+                    
                     # Generate superpixels
                     segments = self.superpixel_gen.generate_superpixels(processed_image)
                     features = self.superpixel_gen.compute_superpixel_features(
@@ -179,25 +198,6 @@ class DatasetHandler:
                     # Store all features in the graph
                     G.graph['conventional_features'] = conventional_features
                     G.graph['dermoscopic_features'] = dermoscopic_features
-                    
-                    # Save preprocessed images if requested (first 5 per class)
-                    if save_preprocessed_images and preprocessed_dir and saved_count:
-                        class_name = 'bcc' if class_label == 1 else 'sk'
-                        if saved_count[class_name] < 5:
-                            # Get original filename without extension
-                            original_filename = os.path.splitext(os.path.basename(image_path))[0]
-                            
-                            # Save preprocessed image with original filename
-                            import cv2
-                            preprocessed_filename = f"{original_filename}_preprocessed_{class_name.upper()}.jpg"
-                            preprocessed_path = os.path.join(preprocessed_dir, preprocessed_filename)
-                            
-                            # Convert from RGB to BGR for OpenCV
-                            processed_image_bgr = cv2.cvtColor(processed_image, cv2.COLOR_RGB2BGR)
-                            cv2.imwrite(preprocessed_path, processed_image_bgr)
-                            
-                            saved_count[class_name] += 1
-                            self.logger.info(f"Saved preprocessed image: {preprocessed_filename}")
                     
                     graphs.append(G)
                 except Exception as e:
