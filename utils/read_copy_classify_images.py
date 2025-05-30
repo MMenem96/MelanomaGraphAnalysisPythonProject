@@ -3,11 +3,12 @@ import shutil
 import os
 
 # Load the CSV file
-csv_file = "/Users/mmoniem96/Desktop/Work/Master/Images/HAM100000-Images/metadata.csv"
+csv_file = "E:/FacultyOfScience/My Master/Thesis/DataSet/HAM10000/metadata.csv"
+"""In Mac /Users/mmoniem96/Desktop/Work/Master/Images/HAM100000-Images/metadata.csv" """
 df = pd.read_csv(csv_file)
 
 # Path to the image folder
-image_folder = "/Users/mmoniem96/Desktop/Work/Master/Images/HAM100000-Images/"
+image_folder = "E:/FacultyOfScience/My Master/Thesis/DataSet/HAM10000/"
 
 # Paths to the destination folders
 benign_folder = "data/sk"

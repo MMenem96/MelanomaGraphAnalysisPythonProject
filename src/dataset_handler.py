@@ -41,7 +41,9 @@ class DatasetHandler:
 
     def process_dataset(self, 
                        bcc_dir: str, 
-                       sk_dir: str) -> Tuple[List, List]:
+                       sk_dir: str,
+                       save_preprocessed_images: bool = False,
+                       preprocessed_dir: str = None) -> Tuple[List, List]:
         """Process all images in the dataset and return graphs and labels."""
         try:
             # Validate directories
@@ -50,14 +52,17 @@ class DatasetHandler:
             if not os.path.exists(sk_dir):
                 raise ValueError(f"SK directory not found: {sk_dir}")
                 
+            # Initialize counters for saving preprocessed images
+            saved_count = {'bcc': 0, 'sk': 0}
+            
             # Process BCC images
             self.logger.info(f"Processing BCC images from {bcc_dir}")
-            bcc_graphs = self._process_directory(bcc_dir)
+            bcc_graphs = self._process_directory(bcc_dir, save_preprocessed_images, preprocessed_dir, 1, saved_count)
             bcc_labels = np.ones(len(bcc_graphs))
             
             # Process SK images
             self.logger.info(f"Processing SK images from {sk_dir}")
-            sk_graphs = self._process_directory(sk_dir)
+            sk_graphs = self._process_directory(sk_dir, save_preprocessed_images, preprocessed_dir, 0, saved_count)
             sk_labels = np.zeros(len(sk_graphs))
             
             # Validate we have data
@@ -76,7 +81,8 @@ class DatasetHandler:
             self.logger.error(f"Error processing dataset: {str(e)}")
             raise
 
-    def _process_directory(self, directory: str) -> List:
+    def _process_directory(self, directory: str, save_preprocessed_images: bool = False, 
+                          preprocessed_dir: str = None, class_label: int = None, saved_count: dict = None) -> List:
         """Process all images in a directory and return their graph representations."""
         try:
             graphs = []
@@ -113,6 +119,42 @@ class DatasetHandler:
                     features = self.superpixel_gen.compute_superpixel_features(
                         processed_image, segments)
                     
+                    # Save superpixel images if requested (first 5 per class)
+                    if save_preprocessed_images and preprocessed_dir and saved_count:
+                        class_name = 'bcc' if class_label == 1 else 'sk'
+                        superpixel_count_key = f'{class_name}_superpixel'
+                        
+                        # Initialize superpixel counter if not exists
+                        if superpixel_count_key not in saved_count:
+                            saved_count[superpixel_count_key] = 0
+                        
+                        if saved_count[superpixel_count_key] < 5:
+                            # Create superpixel visualization
+                            import cv2
+                            from skimage.segmentation import mark_boundaries
+                            
+                            # Create superpixel boundary visualization
+                            superpixel_image = mark_boundaries(processed_image, segments, color=(1, 0, 0), mode='thick')
+                            superpixel_image = (superpixel_image * 255).astype(np.uint8)
+                            
+                            # Get original filename
+                            original_filename = os.path.splitext(os.path.basename(image_path))[0]
+                            
+                            # Create superpixel directory
+                            superpixel_dir = preprocessed_dir.replace('preprocessed_images_with_graph', 'preprocess_superpixel_images_with_graph')
+                            os.makedirs(superpixel_dir, exist_ok=True)
+                            
+                            # Save superpixel image
+                            superpixel_filename = f"{original_filename}_superpixel_{class_name.upper()}.jpg"
+                            superpixel_path = os.path.join(superpixel_dir, superpixel_filename)
+                            
+                            # Convert from RGB to BGR for OpenCV
+                            superpixel_image_bgr = cv2.cvtColor(superpixel_image, cv2.COLOR_RGB2BGR)
+                            cv2.imwrite(superpixel_path, superpixel_image_bgr)
+                            
+                            saved_count[superpixel_count_key] += 1
+                            self.logger.info(f"Saved superpixel image: {superpixel_filename}")
+                    
                     # Construct graph
                     G = self.graph_constructor.build_graph(features, segments)
                     
@@ -137,6 +179,25 @@ class DatasetHandler:
                     # Store all features in the graph
                     G.graph['conventional_features'] = conventional_features
                     G.graph['dermoscopic_features'] = dermoscopic_features
+                    
+                    # Save preprocessed images if requested (first 5 per class)
+                    if save_preprocessed_images and preprocessed_dir and saved_count:
+                        class_name = 'bcc' if class_label == 1 else 'sk'
+                        if saved_count[class_name] < 5:
+                            # Get original filename without extension
+                            original_filename = os.path.splitext(os.path.basename(image_path))[0]
+                            
+                            # Save preprocessed image with original filename
+                            import cv2
+                            preprocessed_filename = f"{original_filename}_preprocessed_{class_name.upper()}.jpg"
+                            preprocessed_path = os.path.join(preprocessed_dir, preprocessed_filename)
+                            
+                            # Convert from RGB to BGR for OpenCV
+                            processed_image_bgr = cv2.cvtColor(processed_image, cv2.COLOR_RGB2BGR)
+                            cv2.imwrite(preprocessed_path, processed_image_bgr)
+                            
+                            saved_count[class_name] += 1
+                            self.logger.info(f"Saved preprocessed image: {preprocessed_filename}")
                     
                     graphs.append(G)
                 except Exception as e:
