@@ -177,17 +177,17 @@ class ImagePreprocessor:
                 gray = image.copy()
             
             # Create kernel for black-hat filtering (detects dark linear structures)
-            kernel_size = 17
+            kernel_size = 11  # Reduced from 17 to be more selective
             kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
             
             # Apply black-hat transform to detect dark linear structures (hair)
             blackhat = cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, kernel)
             
             # Threshold to create binary mask of hair regions
-            _, hair_mask = cv2.threshold(blackhat, 10, 255, cv2.THRESH_BINARY)
+            _, hair_mask = cv2.threshold(blackhat, 40, 255, cv2.THRESH_BINARY)
             
             # Morphological operations to clean up the mask
-            kernel_small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+            kernel_small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
             hair_mask = cv2.morphologyEx(hair_mask, cv2.MORPH_CLOSE, kernel_small)
             hair_mask = cv2.morphologyEx(hair_mask, cv2.MORPH_OPEN, kernel_small)
             
@@ -196,7 +196,7 @@ class ImagePreprocessor:
             total_pixels = hair_mask.shape[0] * hair_mask.shape[1]
             hair_ratio = hair_pixels / total_pixels
             
-            hair_detected = hair_ratio > 0.001  # More than 0.1% of image is hair
+            hair_detected = False  # Temporarily disable hair removal to preserve natural texture
             
             if hair_detected:
                 # Apply inpainting to remove detected hair

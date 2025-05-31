@@ -1248,106 +1248,169 @@ def train_features(args, logger):
                     new_height = int(image.shape[0] * scale)
                     image = cv2.resize(image, (new_width, new_height))
                 
-                # Step 0: Apply advanced artifact removal (hair and ruler detection/removal)
-                # Convert to float [0,1] for artifact removal processing
-                image_float = image.astype(float) / 255.0
-               
-                # Initialize artifact removal system with same parameters as train mode
-                from src.preprocessing import ImagePreprocessor
-                artifact_remover = ImagePreprocessor()
-                artifact_remover.hair_removal_enabled = True
-                artifact_remover.ruler_removal_enabled = True
-                # artifact_remover.bubble_removal_enabled = True
-                # artifact_remover.artifact_removal_debug = False  # Set to True for debugging
+
                 
-                # Apply artifact removal
-                try:
-                    image_float_cleaned = artifact_remover.remove_artifacts(image_float)
-                    # Convert back to uint8 [0,255] for subsequent processing
-                    image = (image_float_cleaned * 255).astype(np.uint8)
-                    logger.debug("Applied advanced artifact removal (hair and ruler detection)")
-                except Exception as e:
-                    logger.warning(f"Artifact removal failed for {image_path}: {str(e)}. Using original image.")
-                    # Continue with original image if artifact removal fails
-                    pass
-               
-                
-                # Apply lesion segmentation for Region of Interest (ROI) extraction
-                def segment_lesion_advanced_hsv(img):
-                    """Enhanced lesion segmentation for dermoscopic images using multiple approaches."""
-                    # Convert to different color spaces for robust lesion detection
-                    hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
-                    lab = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
+                # Apply intelligent preprocessing pipeline - adaptive approach for optimal ROI detection
+                def analyze_image_characteristics(img):
+                    """Analyze image to determine optimal preprocessing approach."""
                     gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
                     
-                    # Method 1: Dark lesion detection in grayscale
-                    # Use Otsu's thresholding to separate dark lesions from lighter skin
-                    _, otsu_mask = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+                    # Calculate image statistics
+                    contrast = np.std(gray)
+                    color_variance = np.var(img.reshape(-1, img.shape[-1]), axis=0).mean()
                     
-                    # Method 2: LAB color space - detect darker regions in L channel
-                    l_channel = lab[:,:,0]
-                    # Use adaptive threshold to handle varying lighting
-                    adaptive_mask = cv2.adaptiveThreshold(l_channel, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-                                                        cv2.THRESH_BINARY_INV, 15, 10)
+                    # Convert to HSV for hue analysis
+                    hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
+                    dominant_hue = np.median(hsv[:, :, 0])
                     
-                    # Method 3: HSV-based detection for pigmented lesions
-                    # Focus on low value (dark) regions regardless of hue/saturation
-                    hsv_mask = cv2.inRange(hsv, np.array([0, 0, 0]), np.array([179, 255, 120]))
+                    return contrast, color_variance, dominant_hue
+                
+                def hair_artifact_removal(img):
+                    """Remove hair artifacts using morphological operations."""
+                    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
                     
-                    # Combine all methods - lesion should be detected by at least one method
-                    combined_mask = cv2.bitwise_or(otsu_mask, adaptive_mask)
-                    combined_mask = cv2.bitwise_or(combined_mask, hsv_mask)
+                    # Create morphological kernel for hair detection
+                    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (17, 17))
                     
-                    # Advanced morphological cleaning
-                    # Remove small noise
-                    kernel_small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-                    combined_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_OPEN, kernel_small)
+                    # Black hat operation to detect dark thin structures (hair)
+                    blackhat = cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, kernel)
                     
-                    # Fill holes and smooth boundaries
-                    kernel_large = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
-                    combined_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_CLOSE, kernel_large)
+                    # Threshold to create hair mask
+                    _, hair_mask = cv2.threshold(blackhat, 10, 255, cv2.THRESH_BINARY)
                     
-                    # Keep only the largest connected component (main lesion)
-                    contours, _ = cv2.findContours(combined_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                    if contours:
-                        # Find the largest contour (main lesion)
-                        largest_contour = max(contours, key=cv2.contourArea)
-                        lesion_mask = np.zeros_like(combined_mask)
-                        cv2.fillPoly(lesion_mask, [largest_contour], 255)
+                    # Inpaint to remove hair
+                    result = cv2.inpaint(img, hair_mask, 3, cv2.INPAINT_TELEA)
+                    return result
+                
+                def adaptive_contrast_enhancement(img, contrast_level):
+                    """Apply adaptive CLAHE based on image contrast."""
+                    # Convert to LAB color space
+                    lab = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
+                    
+                    # Determine CLAHE parameters based on contrast
+                    if contrast_level < 15:
+                        clip_limit = 3.0
+                        tile_size = (8, 8)
+                    elif contrast_level < 25:
+                        clip_limit = 2.0
+                        tile_size = (8, 8)
                     else:
-                        # Fallback: if no contours found, use center region
-                        lesion_mask = np.zeros_like(combined_mask)
-                        h, w = lesion_mask.shape
-                        center_y, center_x = h//2, w//2
-                        radius = min(h, w) // 4
-                        cv2.circle(lesion_mask, (center_x, center_y), radius, 255, -1)
+                        clip_limit = 1.5
+                        tile_size = (8, 8)
                     
-                    return lesion_mask.astype(bool)
+                    # Apply CLAHE to L channel
+                    clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_size)
+                    lab[:, :, 0] = clahe.apply(lab[:, :, 0])
+                    
+                    # Convert back to RGB
+                    enhanced = cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
+                    return enhanced
                 
-                # Step 1: Apply Gaussian 2D filter for noise reduction (sigma=0.8)
-                # Process each channel separately to preserve color information
-
-                if args.apply_gaussian_filter:
-                    gaussian_filtered = np.zeros_like(image)
-                    for i in range(image.shape[2]):
-                     gaussian_filtered[:,:,i] = cv2.GaussianBlur(image[:,:,i], (5, 5), 0.8)
-                    image = gaussian_filtered
+                def color_based_segmentation(img):
+                    """Color-based lesion segmentation for high contrast images."""
+                    hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
+                    lab = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
+                    
+                    # Use L channel for segmentation
+                    l_channel = lab[:, :, 0]
+                    
+                    # Otsu thresholding on L channel
+                    _, mask = cv2.threshold(l_channel, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+                    
+                    # Morphological operations
+                    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+                    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+                    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+                    
+                    return mask
                 
-                # Step 2: Optionally apply lesion segmentation masking
-                if args.apply_mask:
-                    # Segment lesion ROI (on Gaussian filtered image)
-                    lesion_mask = segment_lesion_advanced_hsv(image)
-                    lesion_area_ratio = np.sum(lesion_mask) / (image.shape[0] * image.shape[1])
-                    logger.debug(f"Lesion segmentation completed. ROI covers {lesion_area_ratio:.1%} of image")
+                def edge_based_segmentation(img):
+                    """Edge-based segmentation for dark lesions."""
+                    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
                     
-                    # Apply lesion mask to focus on Region of Interest
-                    masked_image = image.copy()
-                    masked_image[~lesion_mask] = [128, 128, 128]  # Gray background for non-lesion areas
-                    image = masked_image
+                    # Gaussian blur
+                    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
                     
-                    logger.debug("Applied Gaussian 2D filter with sigma=0.8 and lesion ROI masking")
-                else:
-                    logger.debug("Applied Gaussian 2D filter with sigma=0.8 (no masking)")
+                    # Adaptive threshold for edge detection
+                    edges = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+                                                 cv2.THRESH_BINARY_INV, 11, 2)
+                    
+                    # Morphological operations to close gaps
+                    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+                    edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
+                    edges = cv2.morphologyEx(edges, cv2.MORPH_OPEN, kernel)
+                    
+                    return edges
+                
+                def center_crop_segmentation(img, crop_ratio=0.7):
+                    """Reliable center-crop segmentation as fallback."""
+                    h, w = img.shape[:2]
+                    center_y, center_x = h // 2, w // 2
+                    
+                    # Calculate crop dimensions
+                    crop_h = int(h * crop_ratio)
+                    crop_w = int(w * crop_ratio)
+                    
+                    # Create mask
+                    mask = np.zeros((h, w), dtype=np.uint8)
+                    y1 = center_y - crop_h // 2
+                    y2 = center_y + crop_h // 2
+                    x1 = center_x - crop_w // 2
+                    x2 = center_x + crop_w // 2
+                    
+                    mask[y1:y2, x1:x2] = 255
+                    return mask
+                
+                def intelligent_preprocessing_pipeline(img):
+                    """Complete intelligent preprocessing pipeline."""
+                    # Step 1: Analyze image characteristics
+                    contrast, color_variance, hue = analyze_image_characteristics(img)
+                    logger.debug(f"Image analysis - Contrast: {contrast:.1f}, Color variance: {color_variance:.1f}, Hue: {hue:.0f}")
+                    
+                    # Step 2: Hair artifact removal
+                    img_clean = hair_artifact_removal(img)
+                    logger.debug("Applied hair artifact removal")
+                    
+                    # Step 3: Adaptive contrast enhancement
+                    img_enhanced = adaptive_contrast_enhancement(img_clean, contrast)
+                    logger.debug("Applied adaptive contrast enhancement")
+                    
+                    # Step 4: Intelligent ROI detection method selection
+                    if contrast > 20 and color_variance > 3:
+                        # High contrast with good color variation - use color-based
+                        mask = color_based_segmentation(img_enhanced)
+                        method_used = "color_based"
+                        logger.debug("Using color-based segmentation")
+                    elif contrast > 15:
+                        # Good contrast but may be dark - try edge-based
+                        mask = edge_based_segmentation(img_enhanced)
+                        # Validate mask quality
+                        mask_ratio = np.sum(mask > 0) / (mask.shape[0] * mask.shape[1])
+                        if mask_ratio < 0.05 or mask_ratio > 0.8:
+                            # Poor mask quality, fallback to center crop
+                            mask = center_crop_segmentation(img_enhanced)
+                            method_used = "center_crop"
+                            logger.debug("Edge-based failed, using center-crop fallback")
+                        else:
+                            method_used = "edge_based"
+                            logger.debug("Using edge-based segmentation")
+                    else:
+                        # Low contrast or challenging image - use reliable center crop
+                        mask = center_crop_segmentation(img_enhanced)
+                        method_used = "center_crop"
+                        logger.debug("Using reliable center-crop segmentation")
+                    
+                    # Step 5: Apply mask to enhanced image
+                    masked_image = img_enhanced.copy()
+                    mask_bool = mask > 0
+                    masked_image[~mask_bool] = [128, 128, 128]  # Gray background for non-lesion areas
+                    
+                    return masked_image, method_used
+                
+                # Apply the intelligent preprocessing pipeline
+                processed_image, preprocessing_method = intelligent_preprocessing_pipeline(image)
+                image = processed_image
+                logger.debug(f"Preprocessing completed using {preprocessing_method} method")
                 
                 # Save first 5 preprocessed images from each class for visualization
                 current_label = all_labels[idx]
@@ -1373,10 +1436,10 @@ def train_features(args, logger):
                     # Update counters
                     if current_label == 1:
                         saved_bcc_count += 1
-                        logger.info(f"Saved preprocessed BCC image: {save_filename}")
+                        # logger.info(f"Saved preprocessed BCC image: {save_filename}")
                     else:
                         saved_sk_count += 1
-                        logger.info(f"Saved preprocessed SK image: {save_filename}")
+                        # logger.info(f"Saved preprocessed SK image: {save_filename}")
                 
                 # Extract features based on selected feature set
                 if args.feature_set == 'full':
