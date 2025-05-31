@@ -1220,7 +1220,8 @@ def train_features(args, logger):
         # Track saved images for sampling
         saved_bcc_count = 0
         saved_sk_count = 0
-        max_samples_per_class = 5
+        max_sk_samples_per_class = 1487 
+        max_bcc_samples_per_class = 622 
         
         # Extract features from all images
         logger.info("Extracting features from images...")
@@ -1248,25 +1249,24 @@ def train_features(args, logger):
                 # Convert to float [0,1] for artifact removal processing
                 image_float = image.astype(float) / 255.0
                
-               #Atrifact Removing
-                # # Initialize artifact removal system with same parameters as train mode
-                # from src.preprocessing import ImagePreprocessor
-                # artifact_remover = ImagePreprocessor()
-                # artifact_remover.hair_removal_enabled = True
-                # artifact_remover.ruler_removal_enabled = True
+                # Initialize artifact removal system with same parameters as train mode
+                from src.preprocessing import ImagePreprocessor
+                artifact_remover = ImagePreprocessor()
+                artifact_remover.hair_removal_enabled = True
+                artifact_remover.ruler_removal_enabled = True
                 # artifact_remover.bubble_removal_enabled = True
                 # artifact_remover.artifact_removal_debug = False  # Set to True for debugging
                 
-                # # Apply artifact removal
-                # try:
-                #     image_float_cleaned = artifact_remover.remove_artifacts(image_float)
-                #     # Convert back to uint8 [0,255] for subsequent processing
-                #     image = (image_float_cleaned * 255).astype(np.uint8)
-                #     logger.debug("Applied advanced artifact removal (hair and ruler detection)")
-                # except Exception as e:
-                #     logger.warning(f"Artifact removal failed for {image_path}: {str(e)}. Using original image.")
-                #     # Continue with original image if artifact removal fails
-                #     pass
+                # Apply artifact removal
+                try:
+                    image_float_cleaned = artifact_remover.remove_artifacts(image_float)
+                    # Convert back to uint8 [0,255] for subsequent processing
+                    image = (image_float_cleaned * 255).astype(np.uint8)
+                    logger.debug("Applied advanced artifact removal (hair and ruler detection)")
+                except Exception as e:
+                    logger.warning(f"Artifact removal failed for {image_path}: {str(e)}. Using original image.")
+                    # Continue with original image if artifact removal fails
+                    pass
                
                 
                 # Apply lesion segmentation for Region of Interest (ROI) extraction
