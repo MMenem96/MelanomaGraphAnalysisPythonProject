@@ -12,6 +12,8 @@ python manual_run_main.py --mode train_features --feature_set full --feature_sel
 
 python manual_run_main.py --mode train_features --feature_set full --feature_selection mutual_info --feature_classifiers rf,svm_rbf,svm_linear,knn,mlp,gb,logistic,xgboost --optimize --max-images-per-class 30
 
+Best Performance: 
+python manual_run_main.py --mode train_features --feature_set full --feature_selection mutual_info --n_features 150 --classifiers all --optimize
 
 Without feature reduction:
 python manual_run_main.py --mode train_features --feature_set full --feature_selection none --feature_classifiers rf,svm_rbf,svm_linear,knn,mlp,gb,logistic,xgboost --optimize --max-images-per-class 30
