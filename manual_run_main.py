@@ -1351,8 +1351,8 @@ def train_features(args, logger):
                 original_name = os.path.splitext(image_filename)[0]
                 class_name = "BCC" if current_label == 1 else "SK"
                 
-                if (current_label == 1 and saved_bcc_count < max_samples_per_class) or \
-                   (current_label == 0 and saved_sk_count < max_samples_per_class):
+                if (current_label == 1 and saved_bcc_count < max_bcc_samples_per_class) or \
+                   (current_label == 0 and saved_sk_count < max_sk_samples_per_class):
                     
                     # Convert image back to BGR for saving with OpenCV
                     image_bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
