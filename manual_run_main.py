@@ -174,6 +174,9 @@ def parse_args():
     
     parser.add_argument('--apply-mask', action='store_true',
                         help='Apply lesion segmentation masking during preprocessing')
+    
+    parser.add_argument('--apply-gaussian-filter', action='store_true',
+                        help='Apply lesion gaussian filter during preprocessing')
 
     return parser.parse_args()
 
@@ -1323,10 +1326,12 @@ def train_features(args, logger):
                 
                 # Step 1: Apply Gaussian 2D filter for noise reduction (sigma=0.8)
                 # Process each channel separately to preserve color information
-                gaussian_filtered = np.zeros_like(image)
-                for i in range(image.shape[2]):
-                    gaussian_filtered[:,:,i] = cv2.GaussianBlur(image[:,:,i], (5, 5), 0.8)
-                image = gaussian_filtered
+
+                if args.apply_gaussian_filter:
+                    gaussian_filtered = np.zeros_like(image)
+                    for i in range(image.shape[2]):
+                     gaussian_filtered[:,:,i] = cv2.GaussianBlur(image[:,:,i], (5, 5), 0.8)
+                    image = gaussian_filtered
                 
                 # Step 2: Optionally apply lesion segmentation masking
                 if args.apply_mask:
