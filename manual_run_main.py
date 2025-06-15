@@ -1375,30 +1375,30 @@ def train_features(args, logger):
                     img_enhanced = adaptive_contrast_enhancement(img_clean, contrast)
                     logger.debug("Applied adaptive contrast enhancement")
                     
-                    # Step 4: Intelligent ROI detection method selection
-                    if contrast > 20 and color_variance > 3:
-                        # High contrast with good color variation - use color-based
-                        mask = color_based_segmentation(img_enhanced)
-                        method_used = "color_based"
-                        logger.debug("Using color-based segmentation")
-                    elif contrast > 15:
-                        # Good contrast but may be dark - try edge-based
-                        mask = edge_based_segmentation(img_enhanced)
-                        # Validate mask quality
-                        mask_ratio = np.sum(mask > 0) / (mask.shape[0] * mask.shape[1])
-                        if mask_ratio < 0.05 or mask_ratio > 0.8:
-                            # Poor mask quality, fallback to center crop
-                            mask = center_crop_segmentation(img_enhanced)
-                            method_used = "center_crop"
-                            logger.debug("Edge-based failed, using center-crop fallback")
-                        else:
-                            method_used = "edge_based"
-                            logger.debug("Using edge-based segmentation")
-                    else:
-                        # Low contrast or challenging image - use reliable center crop
-                        mask = center_crop_segmentation(img_enhanced)
-                        method_used = "center_crop"
-                        logger.debug("Using reliable center-crop segmentation")
+                    # Step 4: ROI detection - using center-crop only for consistency
+                    # if contrast > 20 and color_variance > 3:
+                    #     # High contrast with good color variation - use color-based
+                    #     mask = color_based_segmentation(img_enhanced)
+                    #     method_used = "color_based"
+                    #     logger.debug("Using color-based segmentation")
+                    # elif contrast > 15:
+                    #     # Good contrast but may be dark - try edge-based
+                    #     mask = edge_based_segmentation(img_enhanced)
+                    #     # Validate mask quality
+                    #     mask_ratio = np.sum(mask > 0) / (mask.shape[0] * mask.shape[1])
+                    #     if mask_ratio < 0.05 or mask_ratio > 0.8:
+                    #         # Poor mask quality, fallback to center crop
+                    #         mask = center_crop_segmentation(img_enhanced)
+                    #         method_used = "center_crop"
+                    #         logger.debug("Edge-based failed, using center-crop fallback")
+                    #     else:
+                    #         method_used = "edge_based"
+                    #         logger.debug("Using edge-based segmentation")
+                    # else:
+                    #     # Low contrast or challenging image - use reliable center crop
+                    mask = center_crop_segmentation(img_enhanced)
+                    method_used = "center_crop"
+                    logger.debug("Using center-crop segmentation")
                     
                     # Step 5: Apply mask to enhanced image
                     masked_image = img_enhanced.copy()
@@ -1503,6 +1503,7 @@ def train_features(args, logger):
         logger.info(f"Total number of extracted features (after expansion): {len(expanded_feature_keys)}")
         
         # Save feature names to file for reference
+        os.makedirs(preprocessed_dir, exist_ok=True)  # Ensure directory exists
         feature_names_file = os.path.join(preprocessed_dir, "extracted_feature_names.txt")
         with open(feature_names_file, 'w') as f:
             f.write(f"Feature Extraction Configuration:\n")
