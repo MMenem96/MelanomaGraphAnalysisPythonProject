@@ -1275,7 +1275,7 @@ def train_features(args, logger):
                     gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
                     
                     # Create morphological kernel for hair detection
-                    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (17, 17))
+                    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
                     
                     # Black hat operation to detect dark thin structures (hair)
                     blackhat = cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, kernel)
@@ -1374,10 +1374,12 @@ def train_features(args, logger):
                     
                     # Step 2: Hair artifact removal
                     img_clean = hair_artifact_removal(img)
+                    # img_clean = img
+
                     logger.debug("Applied hair artifact removal")
                     
                     # Step 3: Adaptive contrast enhancement
-                    img_enhanced = adaptive_contrast_enhancement(img_clean, contrast)
+                    # img_enhanced = adaptive_contrast_enhancement(img_clean, contrast)
                     logger.debug("Applied adaptive contrast enhancement")
                     
                     # Step 4: ROI detection - using center-crop only for consistency
@@ -1401,12 +1403,12 @@ def train_features(args, logger):
                     #         logger.debug("Using edge-based segmentation")
                     # else:
                     #     # Low contrast or challenging image - use reliable center crop
-                    mask = center_crop_segmentation(img_enhanced)
+                    mask = center_crop_segmentation(img_clean)
                     method_used = "center_crop"
                     logger.debug("Using center-crop segmentation")
                     
                     # Step 5: Apply mask to enhanced image
-                    masked_image = img_enhanced.copy()
+                    masked_image = img_clean.copy()
                     mask_bool = mask > 0
                     masked_image[~mask_bool] = [128, 128, 128]  # Gray background for non-lesion areas
                     
