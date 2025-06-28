@@ -1240,6 +1240,9 @@ def train_features(args, logger):
                 image = cv2.imread(image_path)
                 image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
                 
+                # Store original image for comparison (before any preprocessing)
+                original_image = image.copy()
+                
                 # Apply preprocessing (resize to manageable dimensions if needed)
                 max_dim = 512
                 if max(image.shape[0], image.shape[1]) > max_dim:
@@ -1247,6 +1250,8 @@ def train_features(args, logger):
                     new_width = int(image.shape[1] * scale)
                     new_height = int(image.shape[0] * scale)
                     image = cv2.resize(image, (new_width, new_height))
+                    # Also resize original for consistent comparison
+                    original_image = cv2.resize(original_image, (new_width, new_height))
                 
 
                 
@@ -1422,16 +1427,37 @@ def train_features(args, logger):
                 if (current_label == 1 and saved_bcc_count < max_bcc_samples_per_class) or \
                    (current_label == 0 and saved_sk_count < max_sk_samples_per_class):
                     
-                    # Convert image back to BGR for saving with OpenCV
+                    # Convert images back to BGR for saving with OpenCV
                     image_bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+                    original_bgr = cv2.cvtColor(original_image, cv2.COLOR_RGB2BGR)
                     
                     # Create filename with class prefix and original name
                     sample_number = saved_bcc_count + 1 if current_label == 1 else saved_sk_count + 1
-                    save_filename = f"{class_name}_{sample_number}_preprocessed_{original_name}.jpg"
-                    save_path = os.path.join(preprocessed_dir, save_filename)
                     
-                    # Save preprocessed image
-                    cv2.imwrite(save_path, image_bgr)
+                    # Create side-by-side comparison image
+                    height, width = original_bgr.shape[:2]
+                    
+                    # Create combined image (side by side)
+                    combined_img = np.zeros((height, width * 2, 3), dtype=np.uint8)
+                    combined_img[:, :width] = original_bgr
+                    combined_img[:, width:] = image_bgr
+                    
+                    # Add text labels
+                    font = cv2.FONT_HERSHEY_SIMPLEX
+                    font_scale = 0.8
+                    font_color = (255, 255, 255)  # White text
+                    font_thickness = 2
+                    
+                    # Add "Original" label
+                    cv2.putText(combined_img, "Original", (10, 30), font, font_scale, font_color, font_thickness)
+                    
+                    # Add "Preprocessed" label
+                    cv2.putText(combined_img, "Preprocessed", (width + 10, 30), font, font_scale, font_color, font_thickness)
+                    
+                    # Save combined image
+                    combined_filename = f"{class_name}_{sample_number}_comparison_{original_name}.jpg"
+                    combined_save_path = os.path.join(preprocessed_dir, combined_filename)
+                    cv2.imwrite(combined_save_path, combined_img)
                     
                     # Update counters
                     if current_label == 1:
