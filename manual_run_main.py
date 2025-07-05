@@ -1366,6 +1366,92 @@ def train_features(args, logger):
                     mask[y1:y2, x1:x2] = 255
                     return mask
                 
+                # Statistical Approach
+                def lesion_aware_segmentation(img):
+                    """
+                    Advanced lesion-aware segmentation using multi-stage detection approach.
+                    Returns a binary mask covering the detected lesion with appropriate margin.
+                    Fallback: uses entire image if detection fails.
+                    """
+                    h, w = img.shape[:2]
+                    
+                    # Stage 1: Color-based lesion detection in LAB color space
+                    lab = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
+                    l_channel = lab[:, :, 0]
+                    a_channel = lab[:, :, 1]
+                    b_channel = lab[:, :, 2]
+                    
+                    # Calculate adaptive thresholds based on image statistics
+                    l_mean = np.mean(l_channel)
+                    l_std = np.std(l_channel)
+                    
+                    # Lesions are typically darker (lower L values) - more permissive threshold
+                    l_threshold = l_mean - 0.4 * l_std
+                    
+                    # Create initial lesion mask based on L channel
+                    lesion_mask = (l_channel < l_threshold).astype(np.uint8) * 255
+                    
+                    # Stage 2: Color variance enhancement in a/b channels
+                    # Lesions often have different color characteristics
+                    a_mean = np.mean(a_channel)
+                    b_mean = np.mean(b_channel)
+                    
+                    # Distance from mean color in a*b* space
+                    color_distance = np.sqrt((a_channel - a_mean)**2 + (b_channel - b_mean)**2)
+                    color_threshold = np.mean(color_distance) + 0.5 * np.std(color_distance)
+                    color_mask = (color_distance > color_threshold).astype(np.uint8) * 255
+                    
+                    # Combine L and color information
+                    combined_mask = cv2.bitwise_or(lesion_mask, color_mask)
+                    
+                    # Stage 3: Morphological processing for noise removal
+                    # Remove small noise regions
+                    kernel_noise = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+                    combined_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_OPEN, kernel_noise)
+                    
+                    # Fill holes in lesion regions
+                    kernel_fill = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+                    combined_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_CLOSE, kernel_fill)
+                    
+                    # Stage 4: Contour analysis and region selection
+                    contours, _ = cv2.findContours(combined_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    
+                    if not contours:
+                        # No lesion detected - use entire image
+                        return np.ones((h, w), dtype=np.uint8) * 255
+                    
+                    # Find the largest contour (most likely the main lesion)
+                    largest_contour = max(contours, key=cv2.contourArea)
+                    contour_area = cv2.contourArea(largest_contour)
+                    
+                    # Validation: check if detected region is reasonable size
+                    image_area = h * w
+                    area_ratio = contour_area / image_area
+                    
+                    if area_ratio < 0.002 or area_ratio > 0.8:
+                        # Detected region too small or too large - use entire image
+                        return np.ones((h, w), dtype=np.uint8) * 255
+                    
+                    # Stage 5: Bounding rectangle with margin calculation
+                    x, y, rect_w, rect_h = cv2.boundingRect(largest_contour)
+                    
+                    # Calculate 25% margin around detected lesion for better context
+                    margin_h = int(rect_h * 0.25)
+                    margin_w = int(rect_w * 0.25)
+                    
+                    # Apply margins with boundary checking
+                    x1 = max(0, x - margin_w)
+                    y1 = max(0, y - margin_h)
+                    x2 = min(w, x + rect_w + margin_w)
+                    y2 = min(h, y + rect_h + margin_h)
+                    
+                    # Create final mask
+                    final_mask = np.zeros((h, w), dtype=np.uint8)
+                    final_mask[y1:y2, x1:x2] = 255
+                    
+                    return final_mask
+
+
                 def intelligent_preprocessing_pipeline(img):
                     """Complete intelligent preprocessing pipeline."""
                     # Step 1: Analyze image characteristics
@@ -1379,7 +1465,7 @@ def train_features(args, logger):
                     logger.debug("Applied hair artifact removal")
                     
                     # Step 3: Adaptive contrast enhancement
-                    # img_enhanced = adaptive_contrast_enhancement(img_clean, contrast)
+                    img_enhanced = adaptive_contrast_enhancement(img_clean, contrast)
                     logger.debug("Applied adaptive contrast enhancement")
                     
                     # Step 4: ROI detection - using center-crop only for consistency
@@ -1403,7 +1489,8 @@ def train_features(args, logger):
                     #         logger.debug("Using edge-based segmentation")
                     # else:
                     #     # Low contrast or challenging image - use reliable center crop
-                    mask = center_crop_segmentation(img_clean)
+                    # mask = center_crop_segmentation(img_clean)
+                    mask = lesion_aware_segmentation(img_clean)
                     method_used = "center_crop"
                     logger.debug("Using center-crop segmentation")
                     
