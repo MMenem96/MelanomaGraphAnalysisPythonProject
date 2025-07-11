@@ -24,6 +24,15 @@ from keras._tf_keras.keras.layers import Conv2D, Conv2DTranspose, MaxPooling2D, 
 # Suppress TensorFlow warnings and specific skimage warnings
 tf.config.run_functions_eagerly(True)
 warnings.filterwarnings('ignore', category=RuntimeWarning, module='skimage')
+warnings.filterwarnings('ignore', category=UserWarning, module='tensorflow')
+warnings.filterwarnings('ignore', category=UserWarning, module='keras')
+
+# Suppress specific TensorFlow data warnings
+import logging
+logging.getLogger('tensorflow').setLevel(logging.ERROR)
+
+# Set TensorFlow to only show errors
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 class SkinLesionProcessor:
     def __init__(self, model_path='src/segmentation/model/model-skin-lesion-segmentation-org2000.h5'):
@@ -42,7 +51,7 @@ class SkinLesionProcessor:
         
         # Create output directory for intermediate results
         self.output_dir = Path("processing_outputs")
-        self.output_dir.mkdir(exist_ok=True)
+        self.output_dir.mkdir(exist_ok=False)
         
     def conv2d_block(self, input_tensor, n_filters, kernel_size=3, batchnorm=True):
         """Function to add 2 convolutional layers with the parameters passed to it"""
@@ -113,10 +122,13 @@ class SkinLesionProcessor:
         # Load U-Net model
         if self.model is None:
             if os.path.exists(self.model_path):
-                input_img = Input((self.IMG_HEIGHT, self.IMG_WIDTH, 3), name='img')
-                self.model = self.get_unet(input_img, n_filters=16, dropout=0.05, batchnorm=True)
-                self.model.compile(optimizer=Adam(), loss="binary_crossentropy", metrics=["accuracy"])
-                self.model.load_weights(self.model_path)
+                # Suppress model loading warnings temporarily
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    input_img = Input((self.IMG_HEIGHT, self.IMG_WIDTH, 3), name='img')
+                    self.model = self.get_unet(input_img, n_filters=16, dropout=0.05, batchnorm=True)
+                    self.model.compile(optimizer=Adam(), loss="binary_crossentropy", metrics=["accuracy"])
+                    self.model.load_weights(self.model_path)
                 print(f"U-Net model loaded from {self.model_path}")
             else:
                 raise FileNotFoundError(f"U-Net model file not found: {self.model_path}")
@@ -150,8 +162,10 @@ class SkinLesionProcessor:
         img_resized = resize(img, (self.IMG_HEIGHT, self.IMG_WIDTH, 3), mode='constant', preserve_range=True)
         X_test[0] = img_resized
         
-        # Predict segmentation mask
-        predicted = self.model.predict(X_test, verbose=0)
+        # Predict segmentation mask with warning suppression
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            predicted = self.model.predict(X_test, verbose=0)
         predicted = (predicted > 0.5).astype(bool)
         
         return predicted
