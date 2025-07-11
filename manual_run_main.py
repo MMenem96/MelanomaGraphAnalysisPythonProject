@@ -43,7 +43,7 @@ from src.dataset_handler import DatasetHandler
 from src.classifier import BCCSKClassifier
 from src.conventional_features import ConventionalFeatureExtractor
 
-from src.segmentation.skin_lesion_segmentation import SkinLesionProcessor
+from segmentation.skin_lesion_processor import SkinLesionProcessor
 
 # Dictionary of available classifiers
 CLASSIFIERS = {
