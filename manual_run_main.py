@@ -42,8 +42,8 @@ from xgboost import XGBClassifier
 from src.dataset_handler import DatasetHandler
 from src.classifier import BCCSKClassifier
 from src.conventional_features import ConventionalFeatureExtractor
-# Import CNN conditionally to avoid errors when just showing help
-# We'll import it only when needed in the functions
+
+from src.segmentation.skin_lesion_segmentation import SkinLesionProcessor
 
 # Dictionary of available classifiers
 CLASSIFIERS = {
@@ -1162,6 +1162,8 @@ def train(args, logger):
         logger.error(f"Error during training: {str(e)}")
         raise
 
+        # Load U-Net once globally
+
 def train_features(args, logger):
     """Train skin lesion classification models using conventional feature engineering approach with dermoscopic features.
     
@@ -1177,6 +1179,10 @@ def train_features(args, logger):
         args: Command line arguments
         logger: Logger instance
     """
+
+    #Initializing the lesion segmenter
+    segmenter = SkinLesionProcessor() 
+
     # Explicitly import the train_test_split function to make sure it's in scope
     from sklearn.model_selection import train_test_split
     try:
@@ -1236,275 +1242,11 @@ def train_features(args, logger):
                 logger.info(f"Processing image {idx+1}/{len(all_image_paths)}")
             
             try:
-                # Load and preprocess image
-                image = cv2.imread(image_path)
-                image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-                
-                # Store original image for comparison (before any preprocessing)
-                original_image = image.copy()
-                
-                # Apply preprocessing (resize to manageable dimensions if needed)
-                max_dim = 512
-                if max(image.shape[0], image.shape[1]) > max_dim:
-                    scale = max_dim / max(image.shape[0], image.shape[1])
-                    new_width = int(image.shape[1] * scale)
-                    new_height = int(image.shape[0] * scale)
-                    image = cv2.resize(image, (new_width, new_height))
-                    # Also resize original for consistent comparison
-                    original_image = cv2.resize(original_image, (new_width, new_height))
-                
-
-                
-                # Apply intelligent preprocessing pipeline - adaptive approach for optimal ROI detection
-                def analyze_image_characteristics(img):
-                    """Analyze image to determine optimal preprocessing approach."""
-                    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-                    
-                    # Calculate image statistics
-                    contrast = np.std(gray)
-                    color_variance = np.var(img.reshape(-1, img.shape[-1]), axis=0).mean()
-                    
-                    # Convert to HSV for hue analysis
-                    hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
-                    dominant_hue = np.median(hsv[:, :, 0])
-                    
-                    return contrast, color_variance, dominant_hue
-                
-                def hair_artifact_removal(img):
-                    """Remove hair artifacts using morphological operations."""
-                    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-                    
-                    # Create morphological kernel for hair detection
-                    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-                    
-                    # Black hat operation to detect dark thin structures (hair)
-                    blackhat = cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, kernel)
-                    
-                    # Threshold to create hair mask
-                    _, hair_mask = cv2.threshold(blackhat, 10, 255, cv2.THRESH_BINARY)
-                    
-                    # Inpaint to remove hair
-                    result = cv2.inpaint(img, hair_mask, 3, cv2.INPAINT_TELEA)
-                    return result
-                
-                def adaptive_contrast_enhancement(img, contrast_level):
-                    """Apply adaptive CLAHE based on image contrast."""
-                    # Convert to LAB color space
-                    lab = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
-                    
-                    # Determine CLAHE parameters based on contrast
-                    if contrast_level < 15:
-                        clip_limit = 3.0
-                        tile_size = (8, 8)
-                    elif contrast_level < 25:
-                        clip_limit = 2.0
-                        tile_size = (8, 8)
-                    else:
-                        clip_limit = 1.5
-                        tile_size = (8, 8)
-                    
-                    # Apply CLAHE to L channel
-                    clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_size)
-                    lab[:, :, 0] = clahe.apply(lab[:, :, 0])
-                    
-                    # Convert back to RGB
-                    enhanced = cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
-                    return enhanced
-                
-                def color_based_segmentation(img):
-                    """Color-based lesion segmentation for high contrast images."""
-                    hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
-                    lab = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
-                    
-                    # Use L channel for segmentation
-                    l_channel = lab[:, :, 0]
-                    
-                    # Otsu thresholding on L channel
-                    _, mask = cv2.threshold(l_channel, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-                    
-                    # Morphological operations
-                    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-                    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-                    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-                    
-                    return mask
-                
-                def edge_based_segmentation(img):
-                    """Edge-based segmentation for dark lesions."""
-                    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-                    
-                    # Gaussian blur
-                    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-                    
-                    # Adaptive threshold for edge detection
-                    edges = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-                                                 cv2.THRESH_BINARY_INV, 11, 2)
-                    
-                    # Morphological operations to close gaps
-                    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
-                    edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
-                    edges = cv2.morphologyEx(edges, cv2.MORPH_OPEN, kernel)
-                    
-                    return edges
-                
-                def center_crop_segmentation(img, crop_ratio=0.7):
-                    """Reliable center-crop segmentation as fallback."""
-                    h, w = img.shape[:2]
-                    center_y, center_x = h // 2, w // 2
-                    
-                    # Calculate crop dimensions
-                    crop_h = int(h * crop_ratio)
-                    crop_w = int(w * crop_ratio)
-                    
-                    # Create mask
-                    mask = np.zeros((h, w), dtype=np.uint8)
-                    y1 = center_y - crop_h // 2
-                    y2 = center_y + crop_h // 2
-                    x1 = center_x - crop_w // 2
-                    x2 = center_x + crop_w // 2
-                    
-                    mask[y1:y2, x1:x2] = 255
-                    return mask
-                
-                # Statistical Approach
-                def lesion_aware_segmentation(img):
-                    """
-                    Advanced lesion-aware segmentation using multi-stage detection approach.
-                    Returns a binary mask covering the detected lesion with appropriate margin.
-                    Fallback: uses entire image if detection fails.
-                    """
-                    h, w = img.shape[:2]
-                    
-                    # Stage 1: Color-based lesion detection in LAB color space
-                    lab = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
-                    l_channel = lab[:, :, 0]
-                    a_channel = lab[:, :, 1]
-                    b_channel = lab[:, :, 2]
-                    
-                    # Calculate adaptive thresholds based on image statistics
-                    l_mean = np.mean(l_channel)
-                    l_std = np.std(l_channel)
-                    
-                    # Lesions are typically darker (lower L values) - more permissive threshold
-                    l_threshold = l_mean - 0.4 * l_std
-                    
-                    # Create initial lesion mask based on L channel
-                    lesion_mask = (l_channel < l_threshold).astype(np.uint8) * 255
-                    
-                    # Stage 2: Color variance enhancement in a/b channels
-                    # Lesions often have different color characteristics
-                    a_mean = np.mean(a_channel)
-                    b_mean = np.mean(b_channel)
-                    
-                    # Distance from mean color in a*b* space
-                    color_distance = np.sqrt((a_channel - a_mean)**2 + (b_channel - b_mean)**2)
-                    color_threshold = np.mean(color_distance) + 0.5 * np.std(color_distance)
-                    color_mask = (color_distance > color_threshold).astype(np.uint8) * 255
-                    
-                    # Combine L and color information
-                    combined_mask = cv2.bitwise_or(lesion_mask, color_mask)
-                    
-                    # Stage 3: Morphological processing for noise removal
-                    # Remove small noise regions
-                    kernel_noise = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-                    combined_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_OPEN, kernel_noise)
-                    
-                    # Fill holes in lesion regions
-                    kernel_fill = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-                    combined_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_CLOSE, kernel_fill)
-                    
-                    # Stage 4: Contour analysis and region selection
-                    contours, _ = cv2.findContours(combined_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                    
-                    if not contours:
-                        # No lesion detected - use entire image
-                        return np.ones((h, w), dtype=np.uint8) * 255
-                    
-                    # Find the largest contour (most likely the main lesion)
-                    largest_contour = max(contours, key=cv2.contourArea)
-                    contour_area = cv2.contourArea(largest_contour)
-                    
-                    # Validation: check if detected region is reasonable size
-                    image_area = h * w
-                    area_ratio = contour_area / image_area
-                    
-                    if area_ratio < 0.002 or area_ratio > 0.8:
-                        # Detected region too small or too large - use entire image
-                        return np.ones((h, w), dtype=np.uint8) * 255
-                    
-                    # Stage 5: Bounding rectangle with margin calculation
-                    x, y, rect_w, rect_h = cv2.boundingRect(largest_contour)
-                    
-                    # Calculate 25% margin around detected lesion for better context
-                    margin_h = int(rect_h * 0.25)
-                    margin_w = int(rect_w * 0.25)
-                    
-                    # Apply margins with boundary checking
-                    x1 = max(0, x - margin_w)
-                    y1 = max(0, y - margin_h)
-                    x2 = min(w, x + rect_w + margin_w)
-                    y2 = min(h, y + rect_h + margin_h)
-                    
-                    # Create final mask
-                    final_mask = np.zeros((h, w), dtype=np.uint8)
-                    final_mask[y1:y2, x1:x2] = 255
-                    
-                    return final_mask
-
-
-                def intelligent_preprocessing_pipeline(img):
-                    """Complete intelligent preprocessing pipeline."""
-                    # Step 1: Analyze image characteristics
-                    contrast, color_variance, hue = analyze_image_characteristics(img)
-                    logger.debug(f"Image analysis - Contrast: {contrast:.1f}, Color variance: {color_variance:.1f}, Hue: {hue:.0f}")
-                    
-                    # Step 2: Hair artifact removal
-                    img_clean = hair_artifact_removal(img)
-                    # img_clean = img
-
-                    logger.debug("Applied hair artifact removal")
-                    
-                    # Step 3: Adaptive contrast enhancement
-                    img_enhanced = adaptive_contrast_enhancement(img_clean, contrast)
-                    logger.debug("Applied adaptive contrast enhancement")
-                    
-                    # Step 4: ROI detection - using center-crop only for consistency
-                    # if contrast > 20 and color_variance > 3:
-                    #     # High contrast with good color variation - use color-based
-                    #     mask = color_based_segmentation(img_enhanced)
-                    #     method_used = "color_based"
-                    #     logger.debug("Using color-based segmentation")
-                    # elif contrast > 15:
-                    #     # Good contrast but may be dark - try edge-based
-                    #     mask = edge_based_segmentation(img_enhanced)
-                    #     # Validate mask quality
-                    #     mask_ratio = np.sum(mask > 0) / (mask.shape[0] * mask.shape[1])
-                    #     if mask_ratio < 0.05 or mask_ratio > 0.8:
-                    #         # Poor mask quality, fallback to center crop
-                    #         mask = center_crop_segmentation(img_enhanced)
-                    #         method_used = "center_crop"
-                    #         logger.debug("Edge-based failed, using center-crop fallback")
-                    #     else:
-                    #         method_used = "edge_based"
-                    #         logger.debug("Using edge-based segmentation")
-                    # else:
-                    #     # Low contrast or challenging image - use reliable center crop
-                    # mask = center_crop_segmentation(img_clean)
-                    mask = lesion_aware_segmentation(img_clean)
-                    method_used = "center_crop"
-                    logger.debug("Using center-crop segmentation")
-                    
-                    # Step 5: Apply mask to enhanced image
-                    masked_image = img_clean.copy()
-                    mask_bool = mask > 0
-                    masked_image[~mask_bool] = [128, 128, 128]  # Gray background for non-lesion areas
-                    
-                    return masked_image, method_used
-                
-                # Apply the intelligent preprocessing pipeline
-                processed_image, preprocessing_method = intelligent_preprocessing_pipeline(image)
-                image = processed_image
-                logger.debug(f"Preprocessing completed using {preprocessing_method} method")
+                original_image = cv2.imread(image_path)
+                original_image=cv2.cvtColor(original_image, cv2.COLOR_BGR2RGB)    
+                results = segmenter.process_image(image_path, save_intermediate=False)
+                image = results['segmented_area']
+                logger.debug(f"Preprocessing completed using MeghanaMsl method")
                 
                 # Save first 5 preprocessed images from each class for visualization
                 current_label = all_labels[idx]
