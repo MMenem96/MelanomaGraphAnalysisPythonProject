@@ -33,6 +33,10 @@ class ConventionalFeatureExtractor:
             texture_features = self.extract_texture_features(image, mask)
             features.update(texture_features)
             
+            # Extract dermoscopic-specific features (NEW)
+            dermoscopic_features = self.extract_dermoscopic_features(image, mask)
+            features.update(dermoscopic_features)
+            
             return features
             
         except Exception as e:
@@ -79,6 +83,46 @@ class ConventionalFeatureExtractor:
             # Asymmetry measurement based on moments
             moments = measure.moments(mask)
             features['hu_moments'] = measure.moments_hu(moments).tolist()
+            
+            # Enhanced border analysis
+            try:
+                from skimage.segmentation import find_boundaries
+                from scipy.spatial.distance import pdist
+                
+                # Find border pixels
+                border = find_boundaries(mask, mode='inner')
+                border_coords = np.column_stack(np.where(border))
+                
+                if len(border_coords) > 10:  # Need sufficient border points
+                    # Multi-scale border irregularity
+                    distances = pdist(border_coords)
+                    features['border_distance_mean'] = float(np.mean(distances))
+                    features['border_distance_std'] = float(np.std(distances))
+                    features['border_distance_range'] = float(np.max(distances) - np.min(distances))
+                    
+                    # Local border variation (measures smoothness)
+                    if len(border_coords) > 3:
+                        # Calculate curvature along border
+                        border_smooth = measure.approximate_polygon(border_coords, tolerance=2)
+                        if len(border_smooth) > 3:
+                            features['border_smoothness'] = float(len(border_smooth) / len(border_coords))
+                        else:
+                            features['border_smoothness'] = 1.0
+                    else:
+                        features['border_smoothness'] = 1.0
+                else:
+                    # Default values for insufficient border points
+                    features['border_distance_mean'] = 0.0
+                    features['border_distance_std'] = 0.0
+                    features['border_distance_range'] = 0.0
+                    features['border_smoothness'] = 1.0
+                    
+            except Exception as e:
+                self.logger.warning(f"Error in enhanced border analysis: {str(e)}")
+                features['border_distance_mean'] = 0.0
+                features['border_distance_std'] = 0.0
+                features['border_distance_range'] = 0.0
+                features['border_smoothness'] = 1.0
             
             return features
             
@@ -372,4 +416,196 @@ class ConventionalFeatureExtractor:
             
         except Exception as e:
             self.logger.error(f"Error extracting texture features: {str(e)}")
+            return {}
+        
+    def extract_dermoscopic_features(self, image, mask):
+        """Extract dermoscopic-specific features for BCC vs SK classification."""
+        try:
+            features = {}
+            
+            # Convert to different color spaces for analysis
+            if len(image.shape) == 3 and image.shape[2] >= 3:
+                rgb_image = image[:,:,:3]
+                hsv_image = color.rgb2hsv(rgb_image)
+                lab_image = color.rgb2lab(rgb_image)
+                gray = color.rgb2gray(rgb_image)
+            else:
+                gray = image if len(image.shape) == 2 else image[:,:,0]
+                rgb_image = np.stack([gray] * 3, axis=2)
+                hsv_image = color.rgb2hsv(rgb_image)
+                lab_image = color.rgb2lab(rgb_image)
+            
+            # 1. ARBORIZING VESSELS DETECTION (BCC signature)
+            # Use Frangi vesselness filter to detect vessel-like structures
+            try:
+                from skimage.filters import frangi
+                from skimage.morphology import medial_axis
+                
+                # Updated frangi parameters to avoid deprecation warning
+                vessels = frangi(gray, sigmas=range(1, 4, 1))
+                vessels_masked = vessels[mask]
+                
+                if len(vessels_masked) > 0:
+                    features['vessel_density'] = float(np.mean(vessels_masked))
+                    features['vessel_max_response'] = float(np.max(vessels_masked))
+                    features['vessel_variance'] = float(np.var(vessels_masked))
+                    
+                    # Detect branching patterns (arborizing characteristic)
+                    vessel_binary = vessels > np.percentile(vessels, 95)
+                    vessel_skeleton = medial_axis(vessel_binary)
+                    features['vessel_branching_density'] = float(np.sum(vessel_skeleton) / np.sum(mask))
+                else:
+                    features['vessel_density'] = 0.0
+                    features['vessel_max_response'] = 0.0
+                    features['vessel_variance'] = 0.0
+                    features['vessel_branching_density'] = 0.0
+            except ImportError:
+                # Fallback if frangi filter not available
+                features['vessel_density'] = 0.0
+                features['vessel_max_response'] = 0.0
+                features['vessel_variance'] = 0.0
+                features['vessel_branching_density'] = 0.0
+            
+            # 2. BLUE-GRAY STRUCTURES DETECTION (BCC characteristic)
+            # Analyze blue channel intensity and gray-blue color patterns
+            if len(rgb_image.shape) == 3:
+                blue_channel = rgb_image[:,:,2]
+                blue_masked = blue_channel[mask]
+                
+                # Detect blue-gray areas (high blue, moderate red/green)
+                blue_threshold = np.percentile(blue_masked, 75) if len(blue_masked) > 0 else 0
+                blue_dominant = (blue_channel > blue_threshold) & mask
+                
+                features['blue_gray_area_ratio'] = float(np.sum(blue_dominant) / np.sum(mask)) if np.sum(mask) > 0 else 0
+                features['blue_intensity_mean'] = float(np.mean(blue_masked)) if len(blue_masked) > 0 else 0
+                features['blue_intensity_std'] = float(np.std(blue_masked)) if len(blue_masked) > 0 else 0
+            else:
+                features['blue_gray_area_ratio'] = 0.0
+                features['blue_intensity_mean'] = 0.0
+                features['blue_intensity_std'] = 0.0
+            
+            # 3. SURFACE TEXTURE ANALYSIS (SK vs BCC differentiation)
+            # Analyze surface roughness and "stuck-on" appearance
+            try:
+                # Calculate local standard deviation (roughness measure)
+                from scipy import ndimage
+                roughness = ndimage.generic_filter(gray, np.std, size=5)
+                roughness_masked = roughness[mask]
+                
+                if len(roughness_masked) > 0:
+                    features['surface_roughness_mean'] = float(np.mean(roughness_masked))
+                    features['surface_roughness_std'] = float(np.std(roughness_masked))
+                    features['surface_roughness_max'] = float(np.max(roughness_masked))
+                    
+                    # High roughness areas (warty/stuck-on appearance of SK)
+                    high_roughness = roughness > np.percentile(roughness_masked, 80)
+                    features['high_roughness_ratio'] = float(np.sum(high_roughness & mask) / np.sum(mask))
+                else:
+                    features['surface_roughness_mean'] = 0.0
+                    features['surface_roughness_std'] = 0.0
+                    features['surface_roughness_max'] = 0.0
+                    features['high_roughness_ratio'] = 0.0
+            except:
+                features['surface_roughness_mean'] = 0.0
+                features['surface_roughness_std'] = 0.0
+                features['surface_roughness_max'] = 0.0
+                features['high_roughness_ratio'] = 0.0
+            
+            # 4. PIGMENT PATTERN ANALYSIS
+            # Analyze pigment distribution patterns (important for both BCC and SK)
+            if len(hsv_image.shape) == 3:
+                saturation = hsv_image[:,:,1]
+                value = hsv_image[:,:,2]
+                
+                sat_masked = saturation[mask]
+                val_masked = value[mask]
+                
+                if len(sat_masked) > 0:
+                    # Pigment concentration analysis
+                    features['pigment_saturation_mean'] = float(np.mean(sat_masked))
+                    features['pigment_saturation_std'] = float(np.std(sat_masked))
+                    features['pigment_value_mean'] = float(np.mean(val_masked))
+                    features['pigment_value_std'] = float(np.std(val_masked))
+                    
+                    # Detect areas of high pigmentation
+                    high_pigment = (saturation > np.percentile(sat_masked, 70)) & mask
+                    features['high_pigment_ratio'] = float(np.sum(high_pigment) / np.sum(mask))
+                    
+                    # Pigment distribution uniformity
+                    features['pigment_uniformity'] = float(1.0 / (1.0 + np.std(sat_masked)))
+                else:
+                    features['pigment_saturation_mean'] = 0.0
+                    features['pigment_saturation_std'] = 0.0
+                    features['pigment_value_mean'] = 0.0
+                    features['pigment_value_std'] = 0.0
+                    features['high_pigment_ratio'] = 0.0
+                    features['pigment_uniformity'] = 0.0
+            else:
+                features['pigment_saturation_mean'] = 0.0
+                features['pigment_saturation_std'] = 0.0
+                features['pigment_value_mean'] = 0.0
+                features['pigment_value_std'] = 0.0
+                features['high_pigment_ratio'] = 0.0
+                features['pigment_uniformity'] = 0.0
+            
+            # 5. TRANSLUCENCY ANALYSIS (BCC characteristic)
+            # Analyze for translucent/pearly appearance
+            if len(rgb_image.shape) == 3:
+                # Calculate luminance
+                luminance = 0.299 * rgb_image[:,:,0] + 0.587 * rgb_image[:,:,1] + 0.114 * rgb_image[:,:,2]
+                lum_masked = luminance[mask]
+                
+                if len(lum_masked) > 0:
+                    # High luminance with low saturation suggests translucency
+                    high_luminance = luminance > np.percentile(lum_masked, 80)
+                    low_saturation = hsv_image[:,:,1] < np.percentile(hsv_image[:,:,1][mask], 30)
+                    translucent_areas = high_luminance & low_saturation & mask
+                    
+                    features['translucency_ratio'] = float(np.sum(translucent_areas) / np.sum(mask))
+                    features['luminance_mean'] = float(np.mean(lum_masked))
+                    features['luminance_std'] = float(np.std(lum_masked))
+                else:
+                    features['translucency_ratio'] = 0.0
+                    features['luminance_mean'] = 0.0
+                    features['luminance_std'] = 0.0
+            else:
+                features['translucency_ratio'] = 0.0
+                features['luminance_mean'] = 0.0
+                features['luminance_std'] = 0.0
+            
+            # 6. COMEDO-LIKE OPENINGS DETECTION (SK characteristic)
+            # Detect small dark circular/oval structures
+            try:
+                # Use morphological operations to detect small dark spots
+                dark_spots = gray < np.percentile(gray[mask], 20) if np.sum(mask) > 0 else np.zeros_like(gray, dtype=bool)
+                
+                # Remove small noise and keep only significant dark spots
+                from skimage.morphology import opening, disk
+                dark_spots_cleaned = opening(dark_spots, disk(2))
+                
+                # Count and characterize dark spots
+                from skimage.measure import label, regionprops
+                labeled_spots = label(dark_spots_cleaned)
+                spot_props = regionprops(labeled_spots)
+                
+                features['comedo_count'] = len(spot_props)
+                features['comedo_density'] = float(len(spot_props) / np.sum(mask)) if np.sum(mask) > 0 else 0
+                
+                if spot_props:
+                    spot_areas = [prop.area for prop in spot_props]
+                    features['comedo_mean_area'] = float(np.mean(spot_areas))
+                    features['comedo_area_std'] = float(np.std(spot_areas))
+                else:
+                    features['comedo_mean_area'] = 0.0
+                    features['comedo_area_std'] = 0.0
+            except:
+                features['comedo_count'] = 0
+                features['comedo_density'] = 0.0
+                features['comedo_mean_area'] = 0.0
+                features['comedo_area_std'] = 0.0
+            
+            return features
+            
+        except Exception as e:
+            self.logger.error(f"Error extracting dermoscopic features: {str(e)}")
             return {}

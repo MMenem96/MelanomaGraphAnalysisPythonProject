@@ -107,9 +107,9 @@ def parse_args():
     parser = argparse.ArgumentParser(description='BCC vs SK Detection System')
 
     # Dataset paths
-    parser.add_argument('--bcc-dir', type=str, default='data/bcc',
+    parser.add_argument('--bcc-dir', type=str, default='data/bcc_segmented',
                         help='Directory containing Basal-cell Carcinoma (BCC) images')
-    parser.add_argument('--sk-dir', type=str, default='data/sk',
+    parser.add_argument('--sk-dir', type=str, default='data/sk_segmented',
                         help='Directory containing Seborrheic Keratosis (SK) images')
 
     # Dataset balance parameters
@@ -1294,8 +1294,8 @@ def train_features(args, logger):
         # Track saved images for sampling
         saved_bcc_count = 0
         saved_sk_count = 0
-        max_sk_samples_per_class = 1487 
-        max_bcc_samples_per_class = 622 
+        max_sk_samples_per_class = 1229 
+        max_bcc_samples_per_class = 514 
         
         # Extract features from all images
         logger.info("Extracting features from images...")
@@ -1310,7 +1310,8 @@ def train_features(args, logger):
                 original_image = cv2.imread(image_path)
                 original_image=cv2.cvtColor(original_image, cv2.COLOR_BGR2RGB)    
                 results = segmenter.process_image(image_path, save_intermediate=False)
-                image = results['segmented_area']
+                # image = results['segmented_area']
+                image = original_image
                 logger.debug(f"Preprocessing completed using MeghanaMsl method")
                 
                 # Save first 5 preprocessed images from each class for visualization

@@ -406,13 +406,13 @@ def apply_segmentation_mask(original_path, mask_path, output_path):
         # Convert back to uint8
         segmented = segmented.astype(np.uint8)
         
-        # Create a version with white background for better visualization
-        # Where mask is 0 (background), set to white
-        white_background = np.ones_like(original) * 255
-        segmented_with_white_bg = np.where(mask_3channel > 0, segmented, white_background)
+        # Create a version with black background for optimal feature extraction
+        # Where mask is 0 (background), set to black for better feature quality
+        black_background = np.zeros_like(original)
+        segmented_with_black_bg = np.where(mask_3channel > 0, segmented, black_background)
         
-        # Save the segmented image with white background
-        cv2.imwrite(str(output_path), segmented_with_white_bg)
+        # Save the segmented image with black background
+        cv2.imwrite(str(output_path), segmented_with_black_bg)
         
     except Exception as e:
         print(f"Error applying segmentation mask: {str(e)}")
@@ -427,5 +427,5 @@ if __name__ == "__main__":
     # print("\nStep 3: Merging original images with binary masks...")
     # merge_original_with_mask()
     
-    print("\nStep 4: Extracting skin lesion segmentations...")
+    # print("\nStep 4: Extracting skin lesion segmentations...")
     extract_skin_lesion_segmentation()
