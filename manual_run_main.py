@@ -1164,6 +1164,71 @@ def train(args, logger):
 
         # Load U-Net once globally
 
+def clean_and_preprocess_features(X, feature_names=None, logger=None):
+    """
+    Clean features by handling inf, nan, and extreme values
+    """
+    if logger:
+        logger.info(f"Initial feature shape: {X.shape}")
+    
+    # Step 1: Replace inf and -inf with nan
+    X = np.where(np.isinf(X), np.nan, X)
+    
+    # Step 2: Check for problematic values
+    inf_count = np.isinf(X).sum()
+    nan_count = np.isnan(X).sum()
+    
+    if logger:
+        logger.info(f"Found {inf_count} infinite values")
+        logger.info(f"Found {nan_count} NaN values")
+    
+    # Step 3: Handle NaN values
+    if nan_count > 0:
+        from sklearn.impute import SimpleImputer
+        imputer = SimpleImputer(strategy='median')
+        X = imputer.fit_transform(X)
+        if logger:
+            logger.info("NaN values replaced with median")
+    
+    # Step 4: Cap extreme values using percentile clipping
+    for i in range(X.shape[1]):
+        feature_col = X[:, i]
+        # Calculate percentiles
+        p1, p99 = np.percentile(feature_col, [1, 99])
+        
+        # Cap extreme values
+        X[:, i] = np.clip(feature_col, p1, p99)
+    
+    if logger:
+        logger.info("Extreme values capped using 1st and 99th percentiles")
+    
+    # Step 5: Remove constant features
+    from sklearn.feature_selection import VarianceThreshold
+    variance_selector = VarianceThreshold(threshold=1e-8)
+    X_clean = variance_selector.fit_transform(X)
+    
+    if X_clean.shape[1] < X.shape[1] and logger:
+        removed = X.shape[1] - X_clean.shape[1]
+        logger.info(f"Removed {removed} constant/near-constant features")
+    
+    # Update feature names if provided
+    selected_feature_names = None
+    if feature_names is not None:
+        selected_indices = variance_selector.get_support(indices=True)
+        selected_feature_names = [feature_names[i] for i in selected_indices]
+    
+    # Step 6: Final validation
+    if np.any(np.isinf(X_clean)) or np.any(np.isnan(X_clean)):
+        if logger:
+            logger.error("Still have problematic values after cleaning!")
+        return None, None, None
+    
+    if logger:
+        logger.info(f"Cleaned feature shape: {X_clean.shape}")
+        logger.info(f"Feature value ranges: min={np.min(X_clean):.2e}, max={np.max(X_clean):.2e}")
+    
+    return X_clean, variance_selector, selected_feature_names
+
 def train_features(args, logger):
     """Train skin lesion classification models using conventional feature engineering approach with dermoscopic features.
     
@@ -1400,6 +1465,24 @@ def train_features(args, logger):
                     else:
                         X[i, j] = 0  # Default for unexpected list/array
         
+        # Apply robust data cleaning to prevent numerical issues
+        logger.info("Cleaning feature matrix to prevent infinite/NaN values...")
+        X_clean, variance_selector, cleaned_feature_names = clean_and_preprocess_features(
+            X, expanded_feature_keys, logger
+        )
+        
+        if X_clean is None:
+            logger.error("Feature cleaning failed. Cannot proceed with training.")
+            return
+        
+        # Update feature matrix and names
+        X = X_clean
+        if cleaned_feature_names is not None:
+            expanded_feature_keys = cleaned_feature_names
+        
+        logger.info(f"Using {X.shape[1]} features after cleaning")
+
+
         # Split data into training and testing sets
         X_train, X_test, y_train, y_test = train_test_split(
             X, all_labels, test_size=0.2, random_state=42, stratify=all_labels
@@ -1473,10 +1556,28 @@ def train_features(args, logger):
             selector = SelectKBest(k='all')
             selector.fit(X_train, y_train)
         
-        # Scale features
-        scaler = StandardScaler()
-        X_train = scaler.fit_transform(X_train)
-        X_test = scaler.transform(X_test)
+        # Scale features with robust scaling (better for outliers)
+        from sklearn.preprocessing import RobustScaler
+        scaler = RobustScaler()
+        
+        try:
+            X_train = scaler.fit_transform(X_train)
+            X_test = scaler.transform(X_test)
+            logger.info("Applied robust scaling to features")
+        except Exception as e:
+            logger.warning(f"Robust scaling failed: {str(e)}. Trying standard scaling.")
+            from sklearn.preprocessing import StandardScaler
+            scaler = StandardScaler()
+            X_train = scaler.fit_transform(X_train)
+            X_test = scaler.transform(X_test)
+            logger.info("Applied standard scaling to features")
+        
+        # Final check after scaling
+        if np.any(np.isinf(X_train)) or np.any(np.isnan(X_train)):
+            logger.error("Infinite or NaN values detected after scaling!")
+            return
+        
+        logger.info(f"Scaled feature ranges: train min={np.min(X_train):.2e}, train max={np.max(X_train):.2e}")
         
         # Prepare classifiers based on user selection
         classifiers = {}
@@ -1487,31 +1588,56 @@ def train_features(args, logger):
         else:
             requested_classifiers = args.feature_classifiers.lower().split(',')
         
+        # Initialize classifiers with robust parameters
         for clf_name in requested_classifiers:
             if clf_name == 'rf':
-                clf = RandomForestClassifier(n_estimators=100, random_state=42)
+                clf = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1)
                 classifiers['Random Forest'] = clf
             elif clf_name == 'svm_rbf':
-                clf = SVC(kernel='rbf', probability=True, random_state=42)
+                clf = SVC(kernel='rbf', C=1.0, gamma='scale', probability=True, 
+                         random_state=42, class_weight='balanced')
                 classifiers['SVM (RBF)'] = clf
             elif clf_name == 'svm_linear':
-                clf = SVC(kernel='linear', probability=True, random_state=42)
+                clf = SVC(kernel='linear', C=1.0, probability=True, 
+                         random_state=42, class_weight='balanced')
                 classifiers['SVM (Linear)'] = clf
             elif clf_name == 'knn':
                 clf = KNeighborsClassifier(n_neighbors=5)
                 classifiers['KNN'] = clf
             elif clf_name == 'mlp':
-                clf = MLPClassifier(hidden_layer_sizes=(100, 50), max_iter=1000, random_state=42)
+                clf = MLPClassifier(
+                    hidden_layer_sizes=(50,), 
+                    max_iter=500,
+                    random_state=42,
+                    early_stopping=True,
+                    validation_fraction=0.1,
+                    alpha=0.01
+                )
                 classifiers['MLP'] = clf
             elif clf_name == 'xgboost':
-                # Set base_score=0.5 to fix the "base_score must be in (0,1)" error
-                clf = XGBClassifier(n_estimators=100, random_state=42, base_score=0.5)
+                clf = XGBClassifier(
+                    n_estimators=100, 
+                    random_state=42, 
+                    missing=np.nan,
+                    tree_method='hist',
+                    eval_metric='logloss'
+                )
                 classifiers['XGBoost'] = clf
             elif clf_name == 'gb':
-                clf = GradientBoostingClassifier(n_estimators=100, random_state=42)
+                clf = GradientBoostingClassifier(
+                    n_estimators=100, 
+                    random_state=42,
+                    validation_fraction=0.1,
+                    n_iter_no_change=10
+                )
                 classifiers['Gradient Boosting'] = clf
             elif clf_name == 'logistic':
-                clf = LogisticRegression(max_iter=1000, random_state=42)
+                clf = LogisticRegression(
+                    max_iter=2000,
+                    random_state=42,
+                    C=1.0,
+                    class_weight='balanced'
+                )
                 classifiers['Logistic Regression'] = clf
                 
         if not classifiers:

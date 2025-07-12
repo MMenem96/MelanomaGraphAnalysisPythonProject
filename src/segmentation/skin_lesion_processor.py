@@ -51,7 +51,7 @@ class SkinLesionProcessor:
         
         # Create output directory for intermediate results
         self.output_dir = Path("processing_outputs")
-        self.output_dir.mkdir(exist_ok=False)
+        self.output_dir.mkdir(exist_ok=True)
         
     def conv2d_block(self, input_tensor, n_filters, kernel_size=3, batchnorm=True):
         """Function to add 2 convolutional layers with the parameters passed to it"""
@@ -139,13 +139,31 @@ class SkinLesionProcessor:
         return cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
 
     def apply_blackhat_morphology(self, grayscale_image):
-        """Apply blackhat morphological operation"""
+        """Apply blackhat morphological operation to detect dark hairs"""
         kernel = cv2.getStructuringElement(1, (17, 17))
         return cv2.morphologyEx(grayscale_image, cv2.MORPH_BLACKHAT, kernel)
 
-    def apply_inpainting(self, original_image, blackhat_image):
-        """Apply inpainting using blackhat mask"""
-        ret, thresh2 = cv2.threshold(blackhat_image, 10, 255, cv2.THRESH_BINARY)
+    def apply_tophat_morphology(self, grayscale_image):
+        """Apply tophat morphological operation to detect light/white hairs"""
+        kernel = cv2.getStructuringElement(1, (17, 17))
+        return cv2.morphologyEx(grayscale_image, cv2.MORPH_TOPHAT, kernel)
+
+    def apply_combined_hair_detection(self, grayscale_image):
+        """Detect both dark and light hairs"""
+        # Detect dark hairs
+        blackhat_image = self.apply_blackhat_morphology(grayscale_image)
+        
+        # Detect light/white hairs
+        tophat_image = self.apply_tophat_morphology(grayscale_image)
+        
+        # Combine both masks
+        combined_mask = cv2.add(blackhat_image, tophat_image)
+        
+        return combined_mask, blackhat_image, tophat_image
+
+    def apply_inpainting(self, original_image, hair_mask):
+        """Apply inpainting using combined hair mask"""
+        ret, thresh2 = cv2.threshold(hair_mask, 10, 255, cv2.THRESH_BINARY)
         return cv2.inpaint(original_image, thresh2, 1, cv2.INPAINT_TELEA)
 
     def apply_gaussian_blur(self, image):
@@ -307,11 +325,11 @@ class SkinLesionProcessor:
         # Step 2: Convert to grayscale
         grayscale_image = self.convert_to_grayscale(original_image)
         
-        # Step 3: Apply blackhat morphology
-        blackhat_image = self.apply_blackhat_morphology(grayscale_image)
+        # Step 3: Apply combined hair detection (both black and white hairs)
+        combined_hair_mask, blackhat_image, tophat_image = self.apply_combined_hair_detection(grayscale_image)
         
-        # Step 4: Apply inpainting
-        inpainted_image = self.apply_inpainting(original_image, blackhat_image)
+        # Step 4: Apply inpainting with combined mask
+        inpainted_image = self.apply_inpainting(original_image, combined_hair_mask)
         
         # Step 5: Apply Gaussian blur
         gaussian_blurred_image = self.apply_gaussian_blur(inpainted_image)
