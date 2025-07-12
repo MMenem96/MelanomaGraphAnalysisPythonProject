@@ -11,7 +11,18 @@ def filter_binary_masks():
     """
     Filter binary mask images based on whether their base names exist in bcc or sk folders.
     
-    HAM10000_binary_mask images are named like: ISIC_0024306_segmentation.png
+    HAM10000_binif __name__ == "__main__":
+    # print("Step 1: Filtering binary masks...")
+    # filter_binary_masks()
+    
+    # print("\nStep 2: Filtering original images...")
+    # filter_original_images()
+    
+    # print("\nStep 3: Merging original images with binary masks...")
+    # merge_original_with_mask()
+    
+    print("\nStep 4: Extracting skin lesion segmentations...")
+    extract_skin_lesion_segmentation()images are named like: ISIC_0024306_segmentation.png
     BCC/SK images are named like: ISIC_0024312.jpg
     
     This function extracts the base name (e.g., ISIC_0024306) from mask images and
@@ -290,6 +301,122 @@ def create_merged_image(original_path, mask_path, output_path, image_name, image
     except Exception as e:
         print(f"Error creating merged image for {image_name}: {str(e)}")
 
+def extract_skin_lesion_segmentation():
+    """
+    Extract skin lesion segmentation by applying binary masks to original images.
+    Saves the segmented lesions to bcc_segmented and sk_segmented folders.
+    """
+    
+    # Define paths
+    script_dir = Path(__file__).parent
+    project_root = script_dir.parent
+    base_dir = project_root / "data"
+    
+    bcc_filtered_originals_dir = base_dir / "bcc_filtered_originals"
+    sk_filtered_originals_dir = base_dir / "sk_filtered_originals"
+    bcc_filtered_dir = base_dir / "bcc_filtered"
+    sk_filtered_dir = base_dir / "sk_filtered"
+    
+    # Create output directories for segmented images
+    bcc_segmented_dir = base_dir / "bcc_segmented"
+    sk_segmented_dir = base_dir / "sk_segmented"
+    
+    bcc_segmented_dir.mkdir(exist_ok=True)
+    sk_segmented_dir.mkdir(exist_ok=True)
+    
+    print("Starting to extract skin lesion segmentations...")
+    
+    # Process BCC images
+    bcc_segmented_count = 0
+    if bcc_filtered_originals_dir.exists() and bcc_filtered_dir.exists():
+        for original_file in os.listdir(bcc_filtered_originals_dir):
+            if not original_file.lower().endswith(('.jpg', '.jpeg', '.png')):
+                continue
+                
+            # Get base name (e.g., ISIC_0024306 from ISIC_0024306.jpg)
+            base_name = os.path.splitext(original_file)[0]
+            
+            # Look for corresponding mask file
+            mask_file = f"{base_name}_segmentation.png"
+            mask_path = bcc_filtered_dir / mask_file
+            original_path = bcc_filtered_originals_dir / original_file
+            
+            if mask_path.exists():
+                # Create segmented image
+                segmented_image_path = bcc_segmented_dir / f"{base_name}_segmented.png"
+                apply_segmentation_mask(original_path, mask_path, segmented_image_path)
+                bcc_segmented_count += 1
+                print(f"Created BCC segmented image: {base_name}_segmented.png")
+    
+    # Process SK images
+    sk_segmented_count = 0
+    if sk_filtered_originals_dir.exists() and sk_filtered_dir.exists():
+        for original_file in os.listdir(sk_filtered_originals_dir):
+            if not original_file.lower().endswith(('.jpg', '.jpeg', '.png')):
+                continue
+                
+            # Get base name (e.g., ISIC_0024306 from ISIC_0024306.jpg)
+            base_name = os.path.splitext(original_file)[0]
+            
+            # Look for corresponding mask file
+            mask_file = f"{base_name}_segmentation.png"
+            mask_path = sk_filtered_dir / mask_file
+            original_path = sk_filtered_originals_dir / original_file
+            
+            if mask_path.exists():
+                # Create segmented image
+                segmented_image_path = sk_segmented_dir / f"{base_name}_segmented.png"
+                apply_segmentation_mask(original_path, mask_path, segmented_image_path)
+                sk_segmented_count += 1
+                print(f"Created SK segmented image: {base_name}_segmented.png")
+    
+    print(f"\nSegmentation extraction complete!")
+    print(f"Created {bcc_segmented_count} BCC segmented images in bcc_segmented")
+    print(f"Created {sk_segmented_count} SK segmented images in sk_segmented")
+
+def apply_segmentation_mask(original_path, mask_path, output_path):
+    """
+    Apply binary mask to original image to extract the segmented lesion.
+    
+    Args:
+        original_path: Path to original image
+        mask_path: Path to binary mask
+        output_path: Path to save segmented image
+    """
+    try:
+        # Read original image
+        original = cv2.imread(str(original_path))
+        
+        # Read mask image
+        mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
+        
+        # Resize mask to match original image size if needed
+        if original.shape[:2] != mask.shape:
+            mask = cv2.resize(mask, (original.shape[1], original.shape[0]))
+        
+        # Normalize mask to 0-1 range
+        mask_normalized = mask.astype(np.float32) / 255.0
+        
+        # Expand mask to 3 channels for RGB image
+        mask_3channel = np.stack([mask_normalized] * 3, axis=-1)
+        
+        # Apply mask to original image
+        segmented = original.astype(np.float32) * mask_3channel
+        
+        # Convert back to uint8
+        segmented = segmented.astype(np.uint8)
+        
+        # Create a version with white background for better visualization
+        # Where mask is 0 (background), set to white
+        white_background = np.ones_like(original) * 255
+        segmented_with_white_bg = np.where(mask_3channel > 0, segmented, white_background)
+        
+        # Save the segmented image with white background
+        cv2.imwrite(str(output_path), segmented_with_white_bg)
+        
+    except Exception as e:
+        print(f"Error applying segmentation mask: {str(e)}")
+
 if __name__ == "__main__":
     # print("Step 1: Filtering binary masks...")
     # filter_binary_masks()
@@ -297,5 +424,8 @@ if __name__ == "__main__":
     # print("\nStep 2: Filtering original images...")
     # filter_original_images()
     
-    print("\nStep 3: Merging original images with binary masks...")
-    merge_original_with_mask()
+    # print("\nStep 3: Merging original images with binary masks...")
+    # merge_original_with_mask()
+    
+    print("\nStep 4: Extracting skin lesion segmentations...")
+    extract_skin_lesion_segmentation()
