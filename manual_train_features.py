@@ -169,7 +169,7 @@ def parse_args():
     parser.add_argument('--feature_selection', type=str, default='none',
                         choices=['none', 'mutual_info', 'chi2', 'f_test', 'rfe'],
                         help='Feature selection method for conventional feature engineering')
-    parser.add_argument('--n_features', type=int, default=100,
+    parser.add_argument('--n_features', type=int, default=300,
                         help='Number of features to select when using feature selection')
     parser.add_argument('--feature_classifiers', type=str, default='all',
                         help='Comma-separated list of classifiers to train with feature engineering')
@@ -294,30 +294,32 @@ def specificity_score(y_true, y_pred):
     except Exception:
         return 0.0
 
-
-def generate_summary_table(results, logger, table_num=1, title="Model Comparison Summary"):
+def generate_summary_table(results, logger, table_num=1, title="Model Comparison Summary", save_to_file=True):
     """
-    Generate and log a formatted summary table of model results.
+    Generate and log a formatted summary table of model results, and optionally save to file.
     
     Args:
         results: Dictionary of model results
         logger: Logger instance
         table_num: Table number for reference
         title: Table title
+        save_to_file: Whether to save the table to a text file (default: True)
     """
     try:
         if not results:
             logger.warning("No results provided for summary table")
             return
         
-        logger.info("\n" + "=" * 80)
-        logger.info(f"TABLE {table_num}: {title}")
-        logger.info("=" * 80)
+        # Prepare table content
+        table_content = []
+        table_content.append("=" * 80)
+        table_content.append(f"TABLE {table_num}: {title}")
+        table_content.append("=" * 80)
         
         # Create header
         header = f"{'Model':<20} | {'AC (%)':<8} | {'SN (%)':<8} | {'SP (%)':<8} | {'PR (%)':<8} | {'F1 (%)':<8} | {'AUC (%)':<9} | {'Features':<10}"
-        logger.info(header)
-        logger.info("-" * len(header))
+        table_content.append(header)
+        table_content.append("-" * len(header))
         
         # Sort results by F1 score (descending)
         sorted_results = sorted(results.items(), 
@@ -335,17 +337,72 @@ def generate_summary_table(results, logger, table_num=1, title="Model Comparison
             features = str(metrics.get('NUM_SELECTED', metrics.get('NUM_FEATURES', 'N/A')))
             
             row = f"{model_name:<20} | {ac:<8} | {sn:<8} | {sp:<8} | {pr:<8} | {f1:<8} | {auc:<9} | {features:<10}"
-            logger.info(row)
+            table_content.append(row)
         
-        logger.info("-" * len(header))
+        table_content.append("-" * len(header))
         
         # Add summary statistics
         if len(results) > 1:
             f1_scores = [metrics.get('F1', 0) for metrics in results.values() if metrics.get('F1') is not None]
             if f1_scores:
-                logger.info(f"Summary: Best F1: {max(f1_scores):.1f}%, Average F1: {np.mean(f1_scores):.1f}%, Models: {len(results)}")
+                summary_line = f"Summary: Best F1: {max(f1_scores):.1f}%, Average F1: {np.mean(f1_scores):.1f}%, Models: {len(results)}"
+                table_content.append(summary_line)
         
-        logger.info("=" * 80)
+        table_content.append("=" * 80)
+        
+        # Add metadata
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        table_content.append(f"\nGenerated on: {timestamp}")
+        table_content.append(f"Total models evaluated: {len(results)}")
+        
+        # Log to console
+        logger.info("\n" + "\n".join(table_content))
+        
+        # Save to file if requested
+        if save_to_file:
+            try:
+                import os
+                
+                # Create output/tables directory if it doesn't exist
+                output_dir = "output/tables"
+                os.makedirs(output_dir, exist_ok=True)
+                
+                # Generate filename with timestamp and table info
+                safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_')).rstrip()
+                safe_title = safe_title.replace(' ', '_')
+                filename = f"table_{table_num}_{safe_title}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+                filepath = os.path.join(output_dir, filename)
+                
+                # Write table to file
+                with open(filepath, 'w', encoding='utf-8') as f:
+                    f.write("\n".join(table_content))
+                    
+                    # Add detailed results section
+                    f.write("\n\n" + "=" * 80)
+                    f.write("\nDETAILED RESULTS")
+                    f.write("\n" + "=" * 80)
+                    
+                    for model_name, metrics in sorted_results:
+                        f.write(f"\n\n{model_name}:")
+                        f.write(f"\n  Accuracy: {metrics.get('AC', 0):.2f}%")
+                        f.write(f"\n  Sensitivity/Recall: {metrics.get('SN', 0):.2f}%")
+                        f.write(f"\n  Specificity: {metrics.get('SP', 0):.2f}%")
+                        f.write(f"\n  Precision: {metrics.get('PR', 0):.2f}%")
+                        f.write(f"\n  F1 Score: {metrics.get('F1', 0):.2f}%")
+                        if metrics.get('AUC') is not None:
+                            f.write(f"\n  AUC: {metrics.get('AUC', 0):.2f}%")
+                        f.write(f"\n  Features Used: {metrics.get('NUM_SELECTED', metrics.get('NUM_FEATURES', 'N/A'))}")
+                        
+                        # Add confusion matrix if available
+                        if 'confusion_matrix' in metrics:
+                            f.write(f"\n  Confusion Matrix:")
+                            cm = metrics['confusion_matrix']
+                            f.write(f"\n    {cm}")
+                
+                logger.info(f"Summary table saved to: {filepath}")
+                
+            except Exception as file_error:
+                logger.error(f"Error saving table to file: {str(file_error)}")
         
     except Exception as e:
         logger.error(f"Error generating summary table: {str(e)}")
@@ -550,7 +607,7 @@ def train_features(args, logger):
     """
 
     #Initializing the lesion segmenter
-    segmenter = SkinLesionProcessor() 
+    # segmenter = SkinLesionProcessor() 
 
     # Explicitly import the train_test_split function to make sure it's in scope
     from sklearn.model_selection import train_test_split
@@ -614,8 +671,8 @@ def train_features(args, logger):
             try:
                 original_image = cv2.imread(image_path)
                 original_image=cv2.cvtColor(original_image, cv2.COLOR_BGR2RGB)    
-                results = segmenter.process_image(image_path, save_intermediate=False)
-                # image = results['segmented_area']
+                # results = segmenter.process_image(image_path, save_intermediate=False)
+                # image = results['inpainted_image']
                 image = original_image
                 logger.debug(f"Preprocessing completed using MeghanaMsl method")
                 

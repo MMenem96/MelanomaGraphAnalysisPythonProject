@@ -140,12 +140,12 @@ class SkinLesionProcessor:
 
     def apply_blackhat_morphology(self, grayscale_image):
         """Apply blackhat morphological operation to detect dark hairs"""
-        kernel = cv2.getStructuringElement(1, (7, 7))
+        kernel = cv2.getStructuringElement(1, (5, 5))
         return cv2.morphologyEx(grayscale_image, cv2.MORPH_BLACKHAT, kernel)
 
     def apply_tophat_morphology(self, grayscale_image):
         """Apply tophat morphological operation to detect light/white hairs"""
-        kernel = cv2.getStructuringElement(1, (7, 7))
+        kernel = cv2.getStructuringElement(1, (5, 5))
         return cv2.morphologyEx(grayscale_image, cv2.MORPH_TOPHAT, kernel)
 
     def apply_combined_hair_detection(self, grayscale_image):

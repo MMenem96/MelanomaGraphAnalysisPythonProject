@@ -1309,7 +1309,7 @@ def train_features(args, logger):
             try:
                 original_image = cv2.imread(image_path)
                 original_image=cv2.cvtColor(original_image, cv2.COLOR_BGR2RGB)    
-                results = segmenter.process_image(image_path, save_intermediate=False)
+                # results = segmenter.process_image(image_path, save_intermediate=False)
                 # image = results['segmented_area']
                 image = original_image
                 logger.debug(f"Preprocessing completed using MeghanaMsl method")
