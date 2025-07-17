@@ -370,7 +370,6 @@ class SkinLesionProcessor:
             'mask_binary': mask_binary
         }
 
-
 # Example usage
 if __name__ == "__main__":
     # Initialize the processor once

@@ -34,8 +34,8 @@ class ConventionalFeatureExtractor:
             features.update(texture_features)
             
             # Extract dermoscopic-specific features (NEW)
-            dermoscopic_features = self.extract_dermoscopic_features(image, mask)
-            features.update(dermoscopic_features)
+            # dermoscopic_features = self.extract_dermoscopic_features(image, mask)
+            # features.update(dermoscopic_features)
             
             return features
             
@@ -238,7 +238,7 @@ class ConventionalFeatureExtractor:
             # NEW: Apply contrast enhancement to improve feature extraction
             masked_gray_enhanced = filters.rank.enhance_contrast(
                 (masked_gray * 255).astype(np.uint8), 
-                footprint=np.ones((5, 5)),
+                footprint=np.ones((3, 3)),
                 mask=mask.astype(np.uint8)
             ).astype(float) / 255.0
             

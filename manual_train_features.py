@@ -173,7 +173,7 @@ def parse_args():
                         help='Number of features to select when using feature selection')
     parser.add_argument('--feature_classifiers', type=str, default='all',
                         help='Comma-separated list of classifiers to train with feature engineering')
-    parser.add_argument('--optimize', action='store_true',
+    parser.add_argument('--optimize', action='store_true', default= True,
                         help='Perform hyperparameter optimization for feature-based classifiers')
     
     parser.add_argument('--apply-mask', action='store_true',
@@ -607,7 +607,7 @@ def train_features(args, logger):
     """
 
     #Initializing the lesion segmenter
-    # segmenter = SkinLesionProcessor() 
+    segmenter = SkinLesionProcessor() 
 
     # Explicitly import the train_test_split function to make sure it's in scope
     from sklearn.model_selection import train_test_split
@@ -672,8 +672,8 @@ def train_features(args, logger):
                 original_image = cv2.imread(image_path)
                 original_image=cv2.cvtColor(original_image, cv2.COLOR_BGR2RGB)    
                 # results = segmenter.process_image(image_path, save_intermediate=False)
-                # image = results['inpainted_image']
-                image = original_image
+                # image = results['segmented_area']
+                image = original_image.copy()
                 logger.debug(f"Preprocessing completed using MeghanaMsl method")
                 
                 # Save first 5 preprocessed images from each class for visualization
