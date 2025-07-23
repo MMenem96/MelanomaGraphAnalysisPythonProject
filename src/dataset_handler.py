@@ -10,6 +10,8 @@ import logging
 from typing import List, Tuple
 import glob
 import pandas as pd
+import cv2
+import matplotlib.pyplot as plt
 
 class DatasetHandler:
     def __init__(self, 
@@ -39,47 +41,53 @@ class DatasetHandler:
         os.makedirs('data/sk', exist_ok=True)
         os.makedirs('test', exist_ok=True)
 
-    def process_dataset(self, 
-                       bcc_dir: str, 
-                       sk_dir: str,
-                       save_preprocessed_images: bool = False,
-                       preprocessed_dir: str = None) -> Tuple[List, List]:
-        """Process all images in the dataset and return graphs and labels."""
+
+    def process_dataset(self, bcc_dir, sk_dir, max_images_per_class=None):
+        """Process dataset with PNG support for segmented images"""
         try:
-            # Validate directories
-            if not os.path.exists(bcc_dir):
-                raise ValueError(f"BCC directory not found: {bcc_dir}")
-            if not os.path.exists(sk_dir):
-                raise ValueError(f"SK directory not found: {sk_dir}")
-                
-            # Initialize counters for saving preprocessed images
-            saved_count = {'bcc': 0, 'sk': 0}
+            graphs = []
+            labels = []
+            
+            # Updated file extensions to include PNG
+            image_extensions = ['*.jpg', '*.jpeg', '*.png', '*.JPG', '*.JPEG', '*.PNG']
             
             # Process BCC images
-            self.logger.info(f"Processing BCC images from {bcc_dir}")
-            bcc_graphs = self._process_directory(bcc_dir, save_preprocessed_images, preprocessed_dir, 1, saved_count)
-            bcc_labels = np.ones(len(bcc_graphs))
+            bcc_paths = []
+            for ext in image_extensions:
+                bcc_paths.extend(glob.glob(os.path.join(bcc_dir, ext)))
             
             # Process SK images
-            self.logger.info(f"Processing SK images from {sk_dir}")
-            sk_graphs = self._process_directory(sk_dir, save_preprocessed_images, preprocessed_dir, 0, saved_count)
-            sk_labels = np.zeros(len(sk_graphs))
+            sk_paths = []
+            for ext in image_extensions:
+                sk_paths.extend(glob.glob(os.path.join(sk_dir, ext)))
             
-            # Validate we have data
-            if not bcc_graphs and not sk_graphs:
-                raise ValueError("No valid images found in either directory")
+            print(f"Found {len(bcc_paths)} BCC images and {len(sk_paths)} SK images")
             
-            # Combine data
-            graphs = bcc_graphs + sk_graphs
-            labels = np.concatenate([bcc_labels, sk_labels])
+            # Limit images if specified
+            if max_images_per_class:
+                bcc_paths = bcc_paths[:max_images_per_class]
+                sk_paths = sk_paths[:max_images_per_class]
             
-            self.logger.info(f"Processed {len(bcc_graphs)} BCC and {len(sk_graphs)} SK images")
+            # Process BCC images
+            for img_path in bcc_paths:
+                graph = self.process_single_image(img_path)
+                if graph is not None:
+                    graphs.append(graph)
+                    labels.append(1)  # BCC label
             
-            return graphs, labels
+            # Process SK images
+            for img_path in sk_paths:
+                graph = self.process_single_image(img_path)
+                if graph is not None:
+                    graphs.append(graph)
+                    labels.append(0)  # SK label
+            
+            return graphs, np.array(labels)
             
         except Exception as e:
-            self.logger.error(f"Error processing dataset: {str(e)}")
-            raise
+            print(f"Error in process_dataset: {str(e)}")
+            return [], []
+
 
     def _process_directory(self, directory: str, save_preprocessed_images: bool = False, 
                           preprocessed_dir: str = None, class_label: int = None, saved_count: dict = None) -> List:
@@ -292,3 +300,157 @@ class DatasetHandler:
         except Exception as e:
             self.logger.error(f"Error saving feature matrix: {str(e)}")
             raise
+
+
+
+    def process_single_image(self, image_path):
+        """Process a single image with PNG transparency support and save superpixel visualization"""
+        try:
+            # Load image with transparency support using preprocessor
+            image = self.preprocessor.load_image_with_transparency_support(image_path)
+            
+            if image is None:
+                return None
+            
+            # Generate lesion mask for segmented images (white background)
+            lesion_mask = self.preprocessor.generate_lesion_mask_from_white_background(image, threshold=10)
+            
+            # Check if mask has enough lesion pixels
+            lesion_area = np.sum(lesion_mask)
+            if lesion_area < 100:
+                print(f"Warning: Very small lesion in {image_path}")
+                return None
+            
+            # Preprocess for segmented lesions
+            processed_image, _ = self.preprocessor.preprocess_segmented_lesion(image, apply_full_preprocessing=False)
+            
+            # Apply lesion mask to focus on lesion area
+            lesion_image = processed_image.copy()
+            if len(lesion_image.shape) == 3:
+                for channel in range(3):
+                    lesion_image[:,:,channel][~lesion_mask] = 1.0  # White background in normalized space
+            
+            # Generate superpixels with reduced count for pre-segmented images
+            segments = self.superpixel_gen.generate_superpixels_with_mask(lesion_image, lesion_mask)
+            
+            # **NEW: Save superpixel visualization**
+            self.save_superpixel_visualization(image, lesion_image, segments, lesion_mask, image_path)
+            
+            # Compute superpixel features
+            features = self.superpixel_gen.compute_superpixel_features(lesion_image, segments)
+            
+            # Construct graph from segments
+            G = self.graph_constructor.build_graph(features, segments)
+            
+            # Extract graph-based features
+            graph_features = {
+                **self.feature_extractor.extract_local_features(G),
+                **self.feature_extractor.extract_global_features(G),
+                **self.feature_extractor.extract_spectral_features(G)
+            }
+            G.graph['features'] = graph_features
+            
+            # Extract conventional features on original image with lesion mask
+            conventional_features = self.conv_feature_extractor.extract_all_features(image, lesion_mask)
+            G.graph['conventional_features'] = conventional_features
+            
+            # Extract dermoscopic features
+            dermoscopic_features = self.dermo_feature_detector.detect_all_features(image, lesion_mask)
+            G.graph['dermoscopic_features'] = dermoscopic_features
+            
+            return G
+            
+        except Exception as e:
+            print(f"Error processing {image_path}: {str(e)}")
+            return None
+
+    def save_superpixel_visualization(self, original_image, processed_image, segments, lesion_mask, image_path):
+        """Save superpixel visualization images for analysis"""
+        try:
+            # Create output directory
+            superpixel_output_dir = "output/superpixel_visualizations"
+            os.makedirs(superpixel_output_dir, exist_ok=True)
+            
+            # Get image filename without extension
+            image_name = os.path.splitext(os.path.basename(image_path))[0]
+            
+            # Determine class from path
+            if 'bcc' in image_path.lower():
+                class_name = "BCC"
+            elif 'sk' in image_path.lower():
+                class_name = "SK"
+            else:
+                class_name = "UNKNOWN"
+            
+            # Only save first 10 images from each class to avoid cluttering
+            existing_files = [f for f in os.listdir(superpixel_output_dir) if f.startswith(f"{class_name}_")]
+            if len(existing_files) >= 10:
+                return
+            
+            # Convert processed image back to uint8 for visualization
+            if processed_image.max() <= 1.0:
+                vis_processed = (processed_image * 255).astype(np.uint8)
+            else:
+                vis_processed = processed_image.astype(np.uint8)
+            
+            # Create superpixel boundary visualization
+            from skimage.segmentation import mark_boundaries
+            
+            # Create superpixel boundary image
+            superpixel_image = mark_boundaries(vis_processed, segments, color=(1, 0, 0), mode='thick')
+            superpixel_image = (superpixel_image * 255).astype(np.uint8)
+            
+            # Create mask overlay
+            mask_overlay = vis_processed.copy()
+            if len(mask_overlay.shape) == 3:
+                # Make background areas slightly transparent/grayed out
+                mask_overlay[~lesion_mask] = mask_overlay[~lesion_mask] * 0.3 + 128 * 0.7
+            
+            # Create combined visualization (2x2 grid)
+            fig, axes = plt.subplots(2, 2, figsize=(12, 12))
+            
+            # Original image
+            axes[0, 0].imshow(original_image)
+            axes[0, 0].set_title('Original Image', fontsize=12)
+            axes[0, 0].axis('off')
+            
+            # Processed image
+            axes[0, 1].imshow(vis_processed)
+            axes[0, 1].set_title('Preprocessed Image', fontsize=12)
+            axes[0, 1].axis('off')
+            
+            # Lesion mask
+            axes[1, 0].imshow(lesion_mask, cmap='gray')
+            axes[1, 0].set_title('Lesion Mask', fontsize=12)
+            axes[1, 0].axis('off')
+            
+            # Superpixel segmentation
+            axes[1, 1].imshow(superpixel_image)
+            axes[1, 1].set_title(f'Superpixel Segmentation\n({len(np.unique(segments[segments > 0]))} segments)', fontsize=12)
+            axes[1, 1].axis('off')
+            
+            # Add overall title
+            fig.suptitle(f'{class_name} - {image_name}', fontsize=14, fontweight='bold')
+            
+            # Save the combined visualization
+            output_filename = f"{class_name}_{len(existing_files)+1:02d}_{image_name}_superpixel_analysis.png"
+            output_path = os.path.join(superpixel_output_dir, output_filename)
+            
+            plt.tight_layout()
+            plt.savefig(output_path, dpi=300, bbox_inches='tight')
+            plt.close()
+            
+            print(f"Saved superpixel visualization: {output_path}")
+            
+            # Also save individual superpixel overlay for quick viewing
+            quick_output_filename = f"{class_name}_{len(existing_files)+1:02d}_{image_name}_superpixels.png"
+            quick_output_path = os.path.join(superpixel_output_dir, quick_output_filename)
+            
+            # Convert RGB to BGR for OpenCV
+            superpixel_bgr = cv2.cvtColor(superpixel_image, cv2.COLOR_RGB2BGR)
+            cv2.imwrite(quick_output_path, superpixel_bgr)
+            
+            print(f"Saved quick superpixel overlay: {quick_output_path}")
+            
+        except Exception as e:
+            print(f"Error saving superpixel visualization for {image_path}: {str(e)}")

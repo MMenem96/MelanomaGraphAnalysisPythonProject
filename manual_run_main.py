@@ -181,60 +181,66 @@ def parse_args():
     return parser.parse_args()
 
 def train(args, logger):
-    """Train one or more skin lesion classification models (BCC vs SK) based on specified classifiers with enhanced feature selection and evaluation."""
+    """Train one or more skin lesion classification models (BCC vs SK) with PNG transparency support."""
     try:
-        # Start timer
         start_time = time.time()
 
         # Check if CNN is specified in classifiers
-        include_cnn = 'cnn' in args.classifiers.lower() or args.classifiers.lower() == 'all'
+        include_cnn = False
+        # include_cnn = 'cnn' in args.classifiers.lower() or args.classifiers.lower() == 'all'
+        include_traditional = args.classifiers.lower() != 'cnn'
 
-        # Initialize dataset handler for graph-based classifiers
-        logger.info("Initializing dataset handler")
-        dataset_handler = DatasetHandler(
-            n_segments=args.n_segments,
-            compactness=args.compactness,
-            connectivity_threshold=args.connectivity_threshold,
-            max_images_per_class=args.max_images_per_class
-        )
-
-        # Variables for CNN training
+        # Variables for both CNN and traditional training
         cnn_train_paths = None
         cnn_train_labels = None
         cnn_test_paths = None
         cnn_test_labels = None
 
-        # Gather all image paths for potential CNN training
+        # **FIXED IMAGE LOADING** - Works for both CNN and traditional classifiers
+        logger.info("Loading image paths for training...")
+        
+        def get_image_paths(directory):
+            """Get all image paths including PNG files for segmented images"""
+            paths = []
+            extensions = ["*.jpg", "*.png", "*.jpeg", "*.JPG", "*.PNG", "*.JPEG"]
+            
+            for ext in extensions:
+                paths.extend(glob.glob(os.path.join(directory, ext)))
+            
+            return sorted(paths)  # Sort for reproducibility
+        
+        # Load all image paths
+        bcc_paths = get_image_paths(args.bcc_dir)
+        sk_paths = get_image_paths(args.sk_dir)
+        
+        logger.info(f"Found {len(bcc_paths)} BCC images and {len(sk_paths)} SK images")
+        
+        if len(bcc_paths) == 0 or len(sk_paths) == 0:
+            logger.error("No images found for training!")
+            return
+
+        # **FIXED: Apply max_images_per_class limit ALWAYS, not just conditionally**
+        if args.max_images_per_class and args.max_images_per_class > 0:
+            bcc_paths = bcc_paths[:args.max_images_per_class]
+            sk_paths = sk_paths[:args.max_images_per_class]
+            logger.info(f"Limited to {len(bcc_paths)} BCC and {len(sk_paths)} SK images")
+
+        # **FIXED: Create combined dataset for CNN (moved outside conditional)**
         if include_cnn:
-            logger.info("Gathering image paths for CNN training")
-            bcc_paths = glob.glob(os.path.join(args.bcc_dir, "*.jpg")) + \
-                       glob.glob(os.path.join(args.bcc_dir, "*.png")) + \
-                       glob.glob(os.path.join(args.bcc_dir, "*.jpeg"))
-
-            sk_paths = glob.glob(os.path.join(args.sk_dir, "*.jpg")) + \
-                      glob.glob(os.path.join(args.sk_dir, "*.png")) + \
-                      glob.glob(os.path.join(args.sk_dir, "*.jpeg"))
-
-            # Limit number of images if needed
-            if args.max_images_per_class > 0:
-                np.random.seed(42)  # For reproducibility
-                if len(bcc_paths) > args.max_images_per_class:
-                    bcc_paths = np.random.choice(bcc_paths, args.max_images_per_class, replace=False).tolist()
-                if len(sk_paths) > args.max_images_per_class:
-                    sk_paths = np.random.choice(sk_paths, args.max_images_per_class, replace=False).tolist()
-
+            logger.info("Preparing CNN dataset...")
+            
             # Combine paths and create labels
             all_image_paths = bcc_paths + sk_paths
             all_image_labels = np.array([1] * len(bcc_paths) + [0] * len(sk_paths))
 
-            # Shuffle data
+            # Shuffle data for better training
             indices = np.arange(len(all_image_paths))
             np.random.seed(42)
             np.random.shuffle(indices)
             all_image_paths = np.array(all_image_paths)[indices].tolist()
             all_image_labels = all_image_labels[indices]
 
-            # Split for CNN
+            # Split for CNN training
             from sklearn.model_selection import train_test_split
             cnn_train_paths, cnn_test_paths, cnn_train_labels, cnn_test_labels = train_test_split(
                 all_image_paths, all_image_labels, test_size=0.2, random_state=42, stratify=all_image_labels
@@ -242,9 +248,8 @@ def train(args, logger):
 
             logger.info(f"CNN dataset: {len(cnn_train_paths)} training, {len(cnn_test_paths)} testing images")
 
-        # Determine which traditional classifiers to train
+        # **TRADITIONAL CLASSIFIERS SETUP**
         selected_classifiers = {}
-        include_traditional = True
 
         if args.classifiers.lower() == 'all':
             selected_classifiers = CLASSIFIERS
@@ -270,12 +275,9 @@ def train(args, logger):
             for clf_name in args.classifiers.split(','):
                 clf_name = clf_name.strip().lower()
                 if clf_name == 'cnn':
-                    # CNN is handled separately
                     continue
                 if clf_name in classifier_map and classifier_map[clf_name] in CLASSIFIERS:
                     selected_classifiers[classifier_map[clf_name]] = CLASSIFIERS[classifier_map[clf_name]]
-                elif clf_name in CLASSIFIERS:
-                    selected_classifiers[clf_name] = CLASSIFIERS[clf_name]
 
             if not selected_classifiers and not include_cnn:
                 logger.warning(f"No valid classifiers found in '{args.classifiers}'. Using all classifiers.")
@@ -287,29 +289,40 @@ def train(args, logger):
         # Results to store all metrics
         results = {}
 
-        # Process data and train traditional classifiers if needed
+        # **TRADITIONAL CLASSIFIERS WITH PNG SUPPORT**
         if include_traditional:
-            # Create directory for saving preprocessed images with graph features
-            preprocessed_dir = "preprocessed_images_with_graph"
-            os.makedirs(preprocessed_dir, exist_ok=True)
+            logger.info("Processing images for graph-based feature extraction...")
             
-            # Process dataset for graph-based features
-            logger.info(f"Processing dataset from {args.bcc_dir} and {args.sk_dir}")
-            graphs, labels = dataset_handler.process_dataset(
-                args.bcc_dir,
-                args.sk_dir,
-                save_preprocessed_images=True,
-                preprocessed_dir=preprocessed_dir
+            # **ENHANCED DatasetHandler with PNG transparency support**
+            dataset_handler = DatasetHandler(
+                n_segments=max(15, args.n_segments // 2),  # Fewer segments for pre-segmented images
+                compactness=args.compactness,
+                connectivity_threshold=args.connectivity_threshold,
+                max_images_per_class=args.max_images_per_class
             )
+            
+            # Process dataset with PNG transparency support
+            try:
+                graphs, labels = dataset_handler.process_dataset(args.bcc_dir, args.sk_dir)
+                
+                if len(graphs) == 0:
+                    logger.error("No valid graphs created from images!")
+                    return
+                
+                logger.info(f"Successfully created {len(graphs)} graphs")
+                
+            except Exception as e:
+                logger.error(f"Error in graph processing: {str(e)}")
+                return
 
             # Save feature matrix for analysis
             logger.info("Creating and saving feature matrix...")
             feature_matrix = dataset_handler.save_feature_matrix(graphs, labels)
             logger.info(f"Feature matrix shape: {feature_matrix.shape}")
             
-            # Extract and save feature names for documentation
+            # Extract feature names for documentation
             if graphs:
-                logger.info("Extracting and documenting graph-based feature names...")
+                logger.info("Extracting feature names...")
                 graph_features = []
                 sample_graph = graphs[0]
                 
@@ -323,198 +336,92 @@ def train(args, logger):
                     conv_features = sample_graph.graph['conventional_features']
                     for feature_name in conv_features.keys():
                         if isinstance(conv_features[feature_name], (list, np.ndarray)):
-                            # For array features, create individual feature names
                             feature_array = conv_features[feature_name]
                             if hasattr(feature_array, '__len__'):
                                 for i in range(len(feature_array)):
                                     graph_features.append(f"Conv_{feature_name}_{i}")
                         else:
                             graph_features.append(f"Conv_{feature_name}")
-                
-                # Dermoscopic features
-                if hasattr(sample_graph, 'graph') and 'dermoscopic_features' in sample_graph.graph:
-                    dermo_features = sample_graph.graph['dermoscopic_features']
-                    for feature_name in dermo_features.keys():
-                        if isinstance(dermo_features[feature_name], (list, np.ndarray)):
-                            # For array features, create individual feature names
-                            feature_array = dermo_features[feature_name]
-                            if hasattr(feature_array, '__len__'):
-                                for i in range(len(feature_array)):
-                                    graph_features.append(f"Dermo_{feature_name}_{i}")
-                        else:
-                            graph_features.append(f"Dermo_{feature_name}")
-                
-                # Save feature names to file
-                feature_names_path = os.path.join(preprocessed_dir, "extracted_feature_names.txt")
-                with open(feature_names_path, 'w') as f:
-                    f.write("Graph-Based Feature Extraction - Feature Names Documentation\n")
-                    f.write("=" * 60 + "\n\n")
-                    f.write(f"Total number of features: {len(graph_features)}\n")
-                    f.write(f"Feature matrix shape: {feature_matrix.shape}\n\n")
-                    f.write("Feature Categories:\n")
-                    f.write("- Graph_*: Graph topology and structure features\n")
-                    f.write("- Conv_*: Conventional image features (color, texture, morphology)\n")
-                    f.write("- Dermo_*: Dermoscopic pattern features\n\n")
-                    f.write("Complete Feature List:\n")
-                    f.write("-" * 30 + "\n")
-                    for i, feature_name in enumerate(graph_features, 1):
-                        f.write(f"{i:3d}. {feature_name}\n")
-                
-                logger.info(f"Feature names documentation saved to: {feature_names_path}")
-                logger.info(f"Total graph-based features documented: {len(graph_features)}")
+
+                logger.info(f"Total graph-based features: {len(graph_features)}")
 
             # Split dataset
             train_graphs, test_graphs, train_labels, test_labels = dataset_handler.split_dataset(
                 graphs, labels, test_size=0.2, random_state=42
             )
 
-            logger.info(f"Dataset split: {len(train_graphs)} training samples, {len(test_graphs)} test samples")
+            logger.info(f"Dataset split: {len(train_graphs)} training, {len(test_graphs)} testing")
 
-            # Log total dataset size and class distribution
-            unique_labels, counts = np.unique(labels, return_counts=True)
-            logger.info(f"Dataset loaded: {len(graphs)} total samples")
-            for label, count in zip(unique_labels, counts):
-                label_name = "Basal-cell Carcinoma (BCC)" if label == 1 else "Seborrheic Keratosis (SK)"
-                logger.info(f"  {label_name}: {count} samples")
-            
-            if len(graphs) < 20:
-                logger.warning("Very small dataset detected! Results may not be reliable.")
-                logger.warning("Recommended minimum: 100 samples per class")
-            elif len(graphs) < 100:
-                logger.warning("Small dataset detected. Consider adding more training data for better results.")
-
-            # Use our optimized BCCSKClassifier to prepare the features
-            logger.info("Preparing features with optimized extraction methods...")
+            # Prepare features using BCCSKClassifier
+            logger.info("Preparing features with optimized extraction...")
             bcc_sk_classifier = BCCSKClassifier()
             X_train = bcc_sk_classifier.prepare_features(train_graphs)
             X_test = bcc_sk_classifier.prepare_features(test_graphs)
-            logger.info(f"Feature matrix shape: {X_train.shape} with {X_train.shape[1]} features")
+            logger.info(f"Feature matrix shape: {X_train.shape}")
 
-            # Train and evaluate each traditional classifier
+            # **TRAIN EACH TRADITIONAL CLASSIFIER**
             for classifier_name, classifier_info in selected_classifiers.items():
                 logger.info(f"Processing classifier: {classifier_name}")
 
-                # Create model directories using standardized naming
-                if classifier_name == 'SVM (RBF)':
-                    model_dir_name = 'SVM_RBF'
-                    classifier_type = 'svm_rbf'
-                elif classifier_name == 'SVM (Sigmoid)':
-                    model_dir_name = 'SVM_Sigmoid'
-                    classifier_type = 'svm_sigmoid'
-                elif classifier_name == 'SVM (Poly)':
-                    model_dir_name = 'SVM_Poly'
-                    classifier_type = 'svm_poly'
-                elif classifier_name == 'SVM (Linear)':
-                    model_dir_name = 'SVM_Linear'
-                    classifier_type = 'svm_linear'
-                elif classifier_name == 'RF':
-                    model_dir_name = 'RF'
-                    classifier_type = 'rf'
-                elif classifier_name == 'KNN':
-                    model_dir_name = 'KNN'
-                    classifier_type = 'knn'
-                elif classifier_name == 'MLP':
-                    model_dir_name = 'MLP'
-                    classifier_type = 'mlp'
-                elif classifier_name == 'Gradient Boosting':
-                    model_dir_name = 'Gradient_Boosting'
-                    classifier_type = 'gradient_boosting'
-                elif classifier_name == 'Logistic Regression':
-                    model_dir_name = 'Logistic_Regression'
-                    classifier_type = 'logistic'
-                elif classifier_name == 'XGBoost':
-                    model_dir_name = 'XGBoost'
-                    classifier_type = 'xgboost'
-                else:
-                    model_dir_name = classifier_name.replace(' ', '_').replace('(', '').replace(')', '')
-                    classifier_type = model_dir_name.lower()
+                # Create model directories
+                model_dir_mapping = {
+                    'SVM (RBF)': 'SVM_RBF',
+                    'SVM (Sigmoid)': 'SVM_Sigmoid', 
+                    'SVM (Poly)': 'SVM_Poly',
+                    'SVM (Linear)': 'SVM_Linear',
+                    'RF': 'RF',
+                    'KNN': 'KNN',
+                    'MLP': 'MLP',
+                    'Gradient Boosting': 'Gradient_Boosting',
+                    'Logistic Regression': 'Logistic_Regression',
+                    'XGBoost': 'XGBoost'
+                }
+                
+                model_dir_name = model_dir_mapping.get(classifier_name, classifier_name.replace(' ', '_'))
+                classifier_type = model_dir_name.lower()
 
                 model_subdir = os.path.join('model', model_dir_name)
                 os.makedirs(model_subdir, exist_ok=True)
-                logger.info(f"Saving model to directory: {model_subdir}")
 
                 try:
-                    # Use our enhanced BCCSKClassifier with all optimizations
-                    logger.info(f"Initializing {classifier_name} with optimized parameters")
+                    # Initialize enhanced BCCSKClassifier
                     classifier = BCCSKClassifier(classifier_type=classifier_type)
                     
                     # Scale features
-                    logger.info("Scaling features...")
                     X_train_scaled = classifier.scaler.fit_transform(X_train)
                     X_test_scaled = classifier.scaler.transform(X_test)
                     
-                    # Feature selection fully disabled - using all features without any constant removal
-                    logger.info("Feature selection completely disabled - using all features...")
-                    # X_train_selected = classifier.select_features(X_train_scaled, train_labels)
-                    
-                    # Directly use the scaled features without any feature selection/constant removal
+                    # Use all features (no selection for maximum performance)
                     X_train_selected = X_train_scaled
                     X_test_selected = X_test_scaled
-                    
-                    # Set feature_selector to None to bypass any selection
                     classifier.feature_selector = None
                     
-                    # # Since we're using all features, just need to make sure we handle constant features consistently
-                    # # This will return X_test_scaled with only constant features removed if any
-                    # if classifier.feature_selector is not None:
-                    #     try:
-                    #         X_test_selected = classifier.feature_selector.transform(X_test_scaled)
-                    #     except ValueError as e:
-                    #         logger.warning(f"Feature selection transform error: {str(e)}")
-                    #         logger.info("Falling back to using all test features")
-                    #         X_test_selected = X_test_scaled
-                    # else:
-                    #     X_test_selected = X_test_scaled
-                    
-                    logger.info(f"Selected {X_train_selected.shape[1]} features out of {X_train.shape[1]}")
+                    logger.info(f"Using all {X_train_selected.shape[1]} features")
 
-                    # Train classifier with cross-validation
-                    start_training = time.time()
-                    logger.info(f"Training {classifier_name} with cross-validation...")
-                    
                     # Optimize hyperparameters if dataset is large enough
                     if len(train_graphs) >= 50:
                         logger.info("Optimizing hyperparameters...")
-                        # Convert labels to integers for bincount
                         train_labels_int = train_labels.astype(int)
-                        
-                        # Get minimum class count and ensure it's at least 2x the number of folds
                         min_class_count = min(np.bincount(train_labels_int))
-                        # Calculate safe CV value - at minimum each class needs 2 samples per fold
                         cv_value = min(5, min_class_count // 2)
-                        # Ensure at least 2 folds 
                         cv_value = max(2, cv_value)
                         
-                        logger.info(f"Using {cv_value}-fold cross-validation for hyperparameter optimization (min class count: {min_class_count})")
                         classifier.optimize_hyperparameters(X_train_selected, train_labels, cv=cv_value)
                     
-                    # Train and evaluate with cross-validation
-                    # Convert labels to integers for bincount
+                    # Train with cross-validation
+                    start_training = time.time()
                     train_labels_int = train_labels.astype(int)
-                    
-                    # Get minimum class count and ensure it's at least 2x the number of folds
                     min_class_count = min(np.bincount(train_labels_int))
-                    # Calculate safe CV value - at minimum each class needs 2 samples per fold
                     cv_value = min(5, min_class_count // 2)
-                    # Ensure at least 2 folds
                     cv_value = max(2, cv_value)
                     
-                    logger.info(f"Using {cv_value}-fold cross-validation for evaluation (min class count: {min_class_count})")
                     cv_results = classifier.train_evaluate(X_train_selected, train_labels, cv=cv_value)
-                    
                     training_time = time.time() - start_training
-                    logger.info(f"Training completed in {training_time:.2f} seconds")
                     
-                    # Log cross-validation results
-                    logger.info(f"Cross-validation results:")
-                    logger.info(f"  CV Accuracy: {cv_results['accuracy']:.2f}% (±{cv_results['std_accuracy']:.2f})")
-                    logger.info(f"  CV Precision: {cv_results['precision']:.2f}% (±{cv_results['std_precision']:.2f})")
-                    logger.info(f"  CV Recall/Sensitivity: {cv_results['recall']:.2f}% (±{cv_results['std_recall']:.2f})")
-                    logger.info(f"  CV F1 Score: {cv_results['f1']:.2f}% (±{cv_results['std_f1']:.2f})")
+                    logger.info(f"Training completed in {training_time:.2f} seconds")
+                    logger.info(f"CV F1 Score: {cv_results['f1']:.2f}%")
                     
                     # Final evaluation on test set
-                    logger.info("Evaluating on test set...")
-                    # Use enhanced predict methods that handle feature dimension mismatches
                     y_pred = classifier.predict(X_test_selected)
                     y_proba = classifier.predict_proba(X_test_selected)[:, 1] if hasattr(classifier, 'predict_proba') else None
                     
@@ -525,224 +432,24 @@ def train(args, logger):
                     metrics['SP'] = specificity_score(test_labels, y_pred) * 100
                     metrics['PR'] = precision_score(test_labels, y_pred, zero_division='warn') * 100
                     metrics['F1'] = f1_score(test_labels, y_pred, zero_division='warn') * 100
-                    metrics['NUM_FEATURES'] = X_train.shape[1]  # Total features
-                    metrics['NUM_SELECTED'] = X_train_selected.shape[1]  # Selected features
-                    metrics['FEATURE_REDUCTION'] = ((X_train.shape[1] - X_train_selected.shape[1]) / X_train.shape[1]) * 100
+                    metrics['NUM_FEATURES'] = X_train.shape[1]
+                    metrics['NUM_SELECTED'] = X_train_selected.shape[1]
                     
                     if y_proba is not None:
-                        try:
-                            metrics['AUC'] = roc_auc_score(test_labels, y_proba) * 100
-                            
-                            # # Generate ROC curve - COMMENTED OUT FOR FASTER TRAINING
-                            # fpr, tpr, _ = roc_curve(test_labels, y_proba)
-                            # 
-                            # # Create ROC curve plot
-                            # plt.figure(figsize=(8, 6))
-                            # plt.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC curve (AUC = {metrics["AUC"]:.2f}%)')
-                            # plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
-                            # plt.xlim([0.0, 1.0])
-                            # plt.ylim([0.0, 1.05])
-                            # plt.xlabel('False Positive Rate')
-                            # plt.ylabel('True Positive Rate')
-                            # plt.title(f'ROC Curve for {classifier_name}')
-                            # plt.legend(loc="lower right")
-                            # 
-                            # # Save ROC curve
-                            # roc_curve_path = os.path.join(model_subdir, "roc_curve.png")
-                            # plt.savefig(roc_curve_path, dpi=300, bbox_inches='tight')
-                            # plt.close()
-                            # logger.info(f"ROC curve saved to {roc_curve_path}")
-                            
-                            # # Generate precision-recall curve - COMMENTED OUT FOR FASTER TRAINING
-                            precision, recall, _ = precision_recall_curve(test_labels, y_proba)
-                            pr_auc = auc(recall, precision)
-                            metrics['PR_AUC'] = pr_auc * 100
-                            
-                            # # Create precision-recall curve plot
-                            # plt.figure(figsize=(8, 6))
-                            # plt.plot(recall, precision, color='green', lw=2, 
-                            #        label=f'Precision-Recall curve (AUC = {pr_auc:.2f})')
-                            # plt.xlabel('Recall')
-                            # plt.ylabel('Precision')
-                            # plt.ylim([0.0, 1.05])
-                            # plt.xlim([0.0, 1.0])
-                            # plt.title(f'Precision-Recall Curve for {classifier_name}')
-                            # plt.legend(loc="lower left")
-                            # 
-                            # # Save precision-recall curve
-                            # pr_curve_path = os.path.join(model_subdir, "precision_recall_curve.png")
-                            # plt.savefig(pr_curve_path, dpi=300, bbox_inches='tight')
-                            # plt.close()
-                            # logger.info(f"Precision-Recall curve saved to {pr_curve_path}")
-                            
-                            # Create output directory for additional visualizations
-                            output_dir = os.path.join('output', 'images', model_dir_name)
-                            os.makedirs(output_dir, exist_ok=True)
-                            
-                            # # Generate and save learning curve - COMMENTED OUT FOR FASTER TRAINING
-                            # logger.info(f"Generating learning curve for {classifier_name}...")
-                            # learning_curve_path = os.path.join(output_dir, "learning_curve.png")
-                            # plot_learning_curve(
-                            #     classifier.classifier, 
-                            #     X_train_selected, 
-                            #     train_labels,
-                            #     cv=cv_value,
-                            #     title=f"Learning Curve for {classifier_name}",
-                            #     save_path=learning_curve_path
-                            # )
-                            # logger.info(f"Learning curve saved to {learning_curve_path}")
-                            
-                            # # Generate and save calibration curve - COMMENTED OUT FOR FASTER TRAINING
-                            # logger.info(f"Generating calibration curve for {classifier_name}...")
-                            # calibration_curve_path = os.path.join(output_dir, "calibration_curve.png")
-                            # plot_calibration_curve(
-                            #     classifier.classifier,
-                            #     X_test_selected,
-                            #     test_labels,
-                            #     name=classifier_name,
-                            #     save_path=calibration_curve_path
-                            # )
-                            # logger.info(f"Calibration curve saved to {calibration_curve_path}")
-                            
-                            # # Generate and save prediction histogram - COMMENTED OUT FOR FASTER TRAINING
-                            # logger.info(f"Generating prediction histogram for {classifier_name}...")
-                            # pred_hist_path = os.path.join(output_dir, "prediction_histogram.png")
-                            # plot_prediction_histogram(
-                            #     classifier.classifier,
-                            #     X_test_selected,
-                            #     test_labels,
-                            #     save_path=pred_hist_path
-                            # )
-                            # logger.info(f"Prediction histogram saved to {pred_hist_path}")
-                            # 
-                            # # Generate and save F1 score vs. threshold curve - COMMENTED OUT FOR FASTER TRAINING
-                            # logger.info(f"Generating F1 score curve for {classifier_name}...")
-                            # f1_curve_path = os.path.join(output_dir, "f1_threshold_curve.png")
-                            # plot_f1_threshold_curve(
-                            #     classifier.classifier,
-                            #     X_test_selected,
-                            #     test_labels,
-                            #     save_path=f1_curve_path
-                            # )
-                            # logger.info(f"F1 score curve saved to {f1_curve_path}")
-                            
-                            # # Generate and save feature importance plot if the classifier supports it - COMMENTED OUT FOR FASTER TRAINING
-                            # logger.info(f"Generating feature importance plot for {classifier_name}...")
-                            # feature_importance_path = os.path.join(output_dir, "feature_importance.png")
-                            # try:
-                            #     # Ensure feature dimensions match before plotting importance
-                            #     X_to_plot = X_test_selected
-                            #     if hasattr(classifier.classifier, 'n_features_in_'):
-                            #         expected_features = classifier.classifier.n_features_in_
-                            #         current_features = X_test_selected.shape[1]
-                            #         
-                            #         if current_features != expected_features:
-                            #             logger.warning(f"Adjusting feature dimensions for importance plot: {current_features} to {expected_features}")
-                            #             
-                            #             if current_features > expected_features:
-                            #                 # Truncate features
-                            #                 X_to_plot = X_test_selected[:, :expected_features]
-                            #             else:
-                            #                 # Pad with zeros
-                            #                 padding = np.zeros((X_test_selected.shape[0], expected_features - current_features))
-                            #                 X_to_plot = np.hstack((X_test_selected, padding))
-                            #     
-                            #     plot_feature_importance(
-                            #         classifier.classifier,
-                            #         X_to_plot,
-                            #         test_labels,
-                            #         feature_names=[f"Feature {i}" for i in range(X_to_plot.shape[1])],
-                            #         top_n=min(20, X_to_plot.shape[1]),
-                            #         save_path=feature_importance_path
-                            #     )
-                            #     logger.info(f"Feature importance plot saved to {feature_importance_path}")
-                            # except Exception as imp_err:
-                            #     logger.warning(f"Could not generate feature importance plot: {str(imp_err)}")
-                            
-                        except Exception as curve_err:
-                            logger.warning(f"Error generating curves: {str(curve_err)}")
-                            metrics['AUC'] = 50.0
-                            metrics['PR_AUC'] = 50.0
+                        metrics['AUC'] = roc_auc_score(test_labels, y_proba) * 100
                     else:
                         metrics['AUC'] = 50.0
-                        metrics['PR_AUC'] = 50.0
-                    
-                    # Log test set results
-                    logger.info(f"Test set results for {classifier_name}:")
-                    logger.info(f"  Accuracy: {metrics['AC']:.2f}%")
-                    logger.info(f"  AUC: {metrics['AUC']:.2f}%")
-                    logger.info(f"  Sensitivity/Recall: {metrics['SN']:.2f}%")
-                    logger.info(f"  Specificity: {metrics['SP']:.2f}%")
-                    logger.info(f"  Precision: {metrics['PR']:.2f}%")
-                    logger.info(f"  F1 Score: {metrics['F1']:.2f}%")
-                    if 'PR_AUC' in metrics:
-                        logger.info(f"  PR-AUC: {metrics['PR_AUC']:.2f}%")
-                    
-                    # Log feature information
-                    logger.info(f"Feature information:")
-                    logger.info(f"  Total features: {metrics['NUM_FEATURES']}")
-                    logger.info(f"  Selected features: {metrics['NUM_SELECTED']}")
-                    logger.info(f"  Feature reduction: {metrics['FEATURE_REDUCTION']:.2f}%")
-                    
-                    # Calculate confusion matrix
-                    cm = confusion_matrix(test_labels, y_pred)
-                    tn, fp, fn, tp = cm.ravel()
-                    logger.info(f"  Confusion Matrix: [[{tn} {fp}], [{fn} {tp}]]")
-                    
-                    # # Generate confusion matrix plot - COMMENTED OUT FOR FASTER TRAINING
-                    # plt.figure(figsize=(8, 6))
-                    # plt.imshow(cm, interpolation='nearest', cmap=plt.cm.Blues)
-                    # plt.title(f'Confusion Matrix for {classifier_name}')
-                    # plt.colorbar()
-                    # plt.xticks([0, 1], ['Seborrheic Keratosis (SK)', 'Basal-cell Carcinoma (BCC)'])
-                    # plt.yticks([0, 1], ['Seborrheic Keratosis (SK)', 'Basal-cell Carcinoma (BCC)'])
-                    # 
-                    # # Add text annotations to the confusion matrix
-                    # thresh = cm.max() / 2
-                    # for i in range(2):
-                    #     for j in range(2):
-                    #         plt.text(j, i, format(cm[i, j], 'd'),
-                    #                 ha="center", va="center",
-                    #                 color="white" if cm[i, j] > thresh else "black")
-                    # 
-                    # plt.ylabel('True Label')
-                    # plt.xlabel('Predicted Label')
-                    # 
-                    # # Save confusion matrix
-                    # cm_path = os.path.join(model_subdir, "confusion_matrix.png")
-                    # plt.savefig(cm_path, dpi=300, bbox_inches='tight')
-                    # plt.close()
-                    # logger.info(f"Confusion matrix saved to {cm_path}")
                     
                     # Store results
                     results[classifier_name] = metrics
                     
-                    # Save training summary to a text file
-                    os.makedirs(os.path.join('output', 'summaries'), exist_ok=True)
-                    summary_path = os.path.join('output', 'summaries', f"{model_dir_name}_training_summary.txt")
-                    with open(summary_path, 'w') as f:
-                        f.write(f"Training Summary for {classifier_name}\n")
-                        f.write(f"==================================\n\n")
-                        f.write(f"Performance Metrics:\n")
-                        f.write(f"  Accuracy: {metrics['AC']:.2f}%\n")
-                        f.write(f"  AUC: {metrics['AUC']:.2f}%\n")
-                        f.write(f"  Sensitivity/Recall: {metrics['SN']:.2f}%\n")
-                        f.write(f"  Specificity: {metrics['SP']:.2f}%\n")
-                        f.write(f"  Precision: {metrics['PR']:.2f}%\n")
-                        f.write(f"  F1 Score: {metrics['F1']:.2f}%\n")
-                        if 'PR_AUC' in metrics:
-                            f.write(f"  PR-AUC: {metrics['PR_AUC']:.2f}%\n\n")
-                        f.write(f"Feature Information:\n")
-                        f.write(f"  Total features: {metrics['NUM_FEATURES']}\n")
-                        f.write(f"  Selected features: {metrics['NUM_SELECTED']}\n")
-                        f.write(f"  Feature reduction: {metrics['FEATURE_REDUCTION']:.2f}%\n\n")
-                        f.write(f"Confusion Matrix:\n")
-                        f.write(f"  [[{tn} {fp}]\n   [{fn} {tp}]]\n\n")
-                        f.write(f"Training completed on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                    # Log results
+                    logger.info(f"Test Results for {classifier_name}:")
+                    logger.info(f"  Accuracy: {metrics['AC']:.2f}%")
+                    logger.info(f"  F1 Score: {metrics['F1']:.2f}%")
+                    logger.info(f"  AUC: {metrics['AUC']:.2f}%")
                     
-                    logger.info(f"Training summary saved to {summary_path}")
-                    
-                    # Save model, scaler, and feature selector
+                    # Save model components
                     model_path = os.path.join(model_subdir, "model.joblib")
                     scaler_path = os.path.join(model_subdir, "scaler.joblib")
                     feature_selector_path = os.path.join(model_subdir, "feature_selector.joblib")
@@ -751,403 +458,87 @@ def train(args, logger):
                     dump(classifier.scaler, scaler_path)
                     dump(classifier.feature_selector, feature_selector_path)
                     
-                    logger.info(f"Model saved to {model_path}")
+                    logger.info(f"Model saved to {model_subdir}")
                     
                 except Exception as e:
                     logger.error(f"Error training {classifier_name}: {str(e)}")
-                    logger.error(traceback.format_exc())
 
-        # Train CNN if requested
+        # **TRAIN CNN WITH PNG SUPPORT**
         if include_cnn and cnn_train_paths is not None:
-            logger.info("Training CNN classifier")
+            logger.info("Training CNN classifier with PNG support...")
 
             try:
-                # Import CNN module only when needed
                 from src.cnn_classifier import CNNBCCSKClassifier
                 
-                # Create model directory
                 model_subdir = os.path.join('model', 'CNN')
                 os.makedirs(model_subdir, exist_ok=True)
 
-                # Configure input shape and training parameters
                 input_shape = (args.input_size, args.input_size, 3)
-                epochs = args.epochs
-                batch_size = args.batch_size
 
-                # Initialize the CNN classifier
+                # **ENHANCED CNN with PNG transparency support**
                 cnn_classifier = CNNBCCSKClassifier(
                     model_type=args.cnn_model,
                     input_shape=input_shape,
                     enhanced=args.enhanced
                 )
 
-                # Train the CNN
                 start_training = time.time()
                 
-                # Determine model file name based on model type and enhanced flag
                 model_file = f"bcc_sk_{args.cnn_model}_"
                 model_file += "enhanced_" if args.enhanced else ""
                 model_file += "model.h5"
                 model_path = os.path.join(model_subdir, model_file)
                 
-                # Log detailed training approach with all parameters
-                if args.enhanced or args.cnn_model == 'enhanced_efficientnet':
-                    logger.info(f"Training enhanced CNN ({args.cnn_model}) with advanced techniques...")
-                    logger.info(f"Training configuration:")
-                    logger.info(f"  - Input shape: {input_shape}")
-                    logger.info(f"  - Initial epochs: {epochs}")
-                    logger.info(f"  - Batch size: {batch_size}")
-                    logger.info(f"  - Fine-tuning epochs: {args.fine_tune_epochs}")
-                    logger.info(f"  - Unfrozen layers: {args.unfreeze_layers}")
-                    logger.info(f"  - MixUp alpha: {args.mixup_alpha} (higher = stronger interpolation)")
-                    logger.info(f"  - Using cyclic learning rate scheduling")
-                else:
-                    logger.info(f"Training CNN ({args.cnn_model})...")
-                    logger.info(f"Training configuration:")
-                    logger.info(f"  - Input shape: {input_shape}")
-                    logger.info(f"  - Epochs: {epochs}")
-                    logger.info(f"  - Batch size: {batch_size}")
-                    logger.info(f"  - Fine-tuning epochs: {args.fine_tune_epochs}")
-                    logger.info(f"  - Unfrozen layers: {args.unfreeze_layers}")
+                logger.info(f"Training CNN ({args.cnn_model}) with transparent PNG support...")
+                logger.info(f"  Input shape: {input_shape}")
+                logger.info(f"  Training images: {len(cnn_train_paths)}")
+                logger.info(f"  Enhanced mode: {args.enhanced}")
                 
-                # Configure fine-tuning layers
-                unfreeze_layers = 0
-                fine_tune_epochs = 0
-                
-                # Set fine-tuning parameters based on command line arguments and model type
-                # Default to command line arguments
-                unfreeze_layers = args.unfreeze_layers
-                fine_tune_epochs = args.fine_tune_epochs
-                
-                # Log fine-tuning strategy based on model type
-                if args.cnn_model == 'enhanced_efficientnet':
-                    # Enhanced EfficientNet has built-in fine-tuning layers
-                    logger.info("Enhanced EfficientNet uses built-in fine-tuning with residual connections")
-                elif args.enhanced:
-                    # Enhanced training with standard models gets intensive fine-tuning
-                    logger.info(f"Enhanced fine-tuning will be applied: last {unfreeze_layers} layers for {fine_tune_epochs} epochs")
-                else:
-                    # Standard training
-                    logger.info(f"Standard fine-tuning will be applied: last {unfreeze_layers} layers for {fine_tune_epochs} epochs")
-                
-                # Train with fine-tuning parameters and MixUp augmentation
+                # Train with PNG transparency support
                 history = cnn_classifier.fit(
                     cnn_train_paths, cnn_train_labels,
                     X_val=cnn_test_paths, y_val=cnn_test_labels,
-                    epochs=epochs,
-                    batch_size=batch_size,
-                    unfreeze_layers=unfreeze_layers,
-                    fine_tune_epochs=fine_tune_epochs,
+                    epochs=args.epochs,
+                    batch_size=args.batch_size,
+                    unfreeze_layers=args.unfreeze_layers,
+                    fine_tune_epochs=args.fine_tune_epochs,
                     model_dir=os.path.dirname(model_path),
                     mixup_alpha=args.mixup_alpha
                 )
+                
                 training_time = time.time() - start_training
                 logger.info(f"CNN training completed in {training_time:.2f} seconds")
 
-                # Evaluate the CNN
-                logger.info("Evaluating CNN model...")
+                # Evaluate CNN
                 eval_results = cnn_classifier.evaluate(cnn_test_paths, cnn_test_labels)
 
-                # Calculate metrics
-                metrics = {}
-                metrics['AC'] = eval_results['accuracy'] * 100
-                metrics['SN'] = eval_results['sensitivity'] * 100
-                metrics['SP'] = eval_results['specificity'] * 100
-                metrics['PR'] = eval_results['precision'] * 100 if 'precision' in eval_results else 0
-                metrics['F1'] = eval_results['f1'] * 100 if 'f1' in eval_results else 0
-                metrics['AUC'] = eval_results['auc'] * 100
+                # Store CNN results
+                cnn_metrics = {
+                    'AC': eval_results['accuracy'] * 100,
+                    'SN': eval_results['sensitivity'] * 100,
+                    'SP': eval_results['specificity'] * 100,
+                    'PR': eval_results.get('precision', 0) * 100,
+                    'F1': eval_results.get('f1', 0) * 100,
+                    'AUC': eval_results['auc'] * 100,
+                    'NUM_FEATURES': eval_results.get('model_info', {}).get('feature_counts', {}).get('total', 0),
+                    'NUM_SELECTED': eval_results.get('model_info', {}).get('feature_counts', {}).get('used', 0)
+                }
                 
-                # Get model summary information if available
-                if 'model_info' in eval_results:
-                    model_info = eval_results['model_info']
-                    hyperparams = model_info.get('hyperparameters', {})
-                    feature_counts = model_info.get('feature_counts', {})
-                    
-                    # Log detailed model architecture information
-                    logger.info("CNN Model Architecture Summary:")
-                    logger.info(f"  Model type: {model_info.get('model_type', 'unknown')}")
-                    logger.info(f"  Enhanced training: {model_info.get('enhanced', False)}")
-                    logger.info(f"  Input shape: {model_info.get('input_shape', 'unknown')}")
-                    
-                    # Log hyperparameters
-                    logger.info("CNN Training Hyperparameters:")
-                    logger.info(f"  Total epochs: {hyperparams.get('total_epochs', 0)}")
-                    logger.info(f"  Batch size: {hyperparams.get('batch_size', 0)}")
-                    logger.info(f"  Fine-tune epochs: {hyperparams.get('fine_tune_epochs', 0)}")
-                    logger.info(f"  Unfrozen layers: {hyperparams.get('unfreeze_layers', 0)}")
-                    logger.info(f"  MixUp alpha: {hyperparams.get('mixup_alpha', 0)}")
-                    
-                    # Log feature counts
-                    logger.info("CNN Model Parameters:")
-                    logger.info(f"  Total parameters: {feature_counts.get('total', 0):,}")
-                    logger.info(f"  Trainable parameters: {feature_counts.get('used', 0):,}")
-                    logger.info(f"  Frozen parameters: {feature_counts.get('frozen', 0):,}")
-                    
-                    # Add key metrics to results dictionary
-                    metrics['NUM_FEATURES'] = feature_counts.get('total', 0)
-                    metrics['NUM_SELECTED'] = feature_counts.get('used', 0)
-                    if metrics['NUM_FEATURES'] > 0:
-                        metrics['FEATURE_REDUCTION'] = ((metrics['NUM_FEATURES'] - metrics['NUM_SELECTED']) / metrics['NUM_FEATURES']) * 100
-                    else:
-                        metrics['FEATURE_REDUCTION'] = 0
+                results[f"CNN ({args.cnn_model})"] = cnn_metrics
                 
-                # Fallback to direct feature counts if model_info not available
-                elif hasattr(cnn_classifier, 'feature_counts'):
-                    metrics['NUM_FEATURES'] = cnn_classifier.feature_counts.get('total', 0)
-                    metrics['NUM_SELECTED'] = cnn_classifier.feature_counts.get('used', 0)
-                    if metrics['NUM_FEATURES'] > 0:
-                        metrics['FEATURE_REDUCTION'] = ((metrics['NUM_FEATURES'] - metrics['NUM_SELECTED']) / metrics['NUM_FEATURES']) * 100
-                    else:
-                        metrics['FEATURE_REDUCTION'] = 0
-                
-                # Log comprehensive results
-                logger.info(f"Results for CNN ({args.cnn_model}):")
-                logger.info(f"  Accuracy: {metrics['AC']:.2f}%")
-                logger.info(f"  AUC: {metrics['AUC']:.2f}%")
-                logger.info(f"  Sensitivity/Recall: {metrics['SN']:.2f}%")
-                logger.info(f"  Specificity: {metrics['SP']:.2f}%")
-                logger.info(f"  Precision: {metrics['PR']:.2f}%")
-                logger.info(f"  F1 Score: {metrics['F1']:.2f}%")
-                
-                # Store results
-                results[f"CNN ({args.cnn_model})"] = metrics
-                
-                # Save detailed evaluation results to a text file
-                os.makedirs(os.path.join('output', 'summaries'), exist_ok=True)
-                summary_path = os.path.join('output', 'summaries', f"CNN_{args.cnn_model}_training_summary.txt")
-                with open(summary_path, 'w') as f:
-                    f.write(f"CNN ({args.cnn_model}) Training Summary\n")
-                    f.write(f"{'=' * 40}\n\n")
-                    f.write(f"Performance Metrics:\n")
-                    f.write(f"  Accuracy: {metrics['AC']:.2f}%\n")
-                    f.write(f"  AUC: {metrics['AUC']:.2f}%\n")
-                    f.write(f"  Sensitivity/Recall: {metrics['SN']:.2f}%\n")
-                    f.write(f"  Specificity: {metrics['SP']:.2f}%\n")
-                    f.write(f"  Precision: {metrics['PR']:.2f}%\n")
-                    f.write(f"  F1 Score: {metrics['F1']:.2f}%\n\n")
-                    
-                    if 'NUM_FEATURES' in metrics:
-                        f.write(f"Architecture Information:\n")
-                        f.write(f"  Model Type: {args.cnn_model}\n")
-                        f.write(f"  Input Size: {args.input_size}x{args.input_size}\n")
-                        f.write(f"  Total Parameters: {int(metrics['NUM_FEATURES']):,}\n")
-                        f.write(f"  Trainable Parameters: {int(metrics['NUM_SELECTED']):,}\n")
-                        f.write(f"  Parameter Reduction: {float(metrics['FEATURE_REDUCTION']):.2f}%\n\n")
-                    
-                    f.write(f"Training Configuration:\n")
-                    f.write(f"  Batch Size: {batch_size}\n")
-                    f.write(f"  Initial Epochs: {epochs}\n")
-                    f.write(f"  Fine-tuning Epochs: {args.fine_tune_epochs}\n")
-                    f.write(f"  Unfrozen Layers: {args.unfreeze_layers}\n")
-                    f.write(f"  Enhanced Training: {args.enhanced}\n")
-                    f.write(f"  MixUp Alpha: {args.mixup_alpha}\n")
-                    f.write(f"  Training Images: {len(cnn_train_paths)}\n")
-                    f.write(f"  Testing Images: {len(cnn_test_paths)}\n\n")
-                    
-                    f.write(f"Training completed on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-                
-                logger.info(f"CNN training summary saved to {summary_path}")
-                
-                # Plot training history
-                output_images_dir = os.path.join('output', 'images')
-                os.makedirs(output_images_dir, exist_ok=True)
-                cnn_classifier.plot_training_history(save_path=os.path.join(output_images_dir, f"CNN_{args.cnn_model}_training_history.png"))
-                
-                # Generate confusion matrix from evaluation results if available
-                if 'confusion_matrix' in eval_results:
-                    cm = eval_results['confusion_matrix']
-                    
-                    # Plot confusion matrix
-                    plt.figure(figsize=(8, 6))
-                    plt.imshow(cm, interpolation='nearest', cmap=plt.cm.Blues)
-                    plt.title(f'Confusion Matrix for CNN ({args.cnn_model})')
-                    plt.colorbar()
-                    plt.xticks([0, 1], ['Seborrheic Keratosis (SK)', 'Basal-cell Carcinoma (BCC)'])
-                    plt.yticks([0, 1], ['Seborrheic Keratosis (SK)', 'Basal-cell Carcinoma (BCC)'])
-                    
-                    # Add text annotations
-                    thresh = cm.max() / 2
-                    for i in range(cm.shape[0]):
-                        for j in range(cm.shape[1]):
-                            plt.text(j, i, format(cm[i, j], 'd'),
-                                   ha="center", va="center",
-                                   color="white" if cm[i, j] > thresh else "black")
-                    
-                    plt.ylabel('True Label')
-                    plt.xlabel('Predicted Label')
-                    
-                    # Save confusion matrix
-                    output_images_dir = os.path.join('output', 'images')
-                    os.makedirs(output_images_dir, exist_ok=True)
-                    cm_path = os.path.join(output_images_dir, f"CNN_{args.cnn_model}_confusion_matrix.png")
-                    plt.savefig(cm_path, dpi=300, bbox_inches='tight')
-                    plt.close()
-                    logger.info(f"CNN confusion matrix saved to {cm_path}")
-                
-                # Generate ROC curve if probabilities are available
-                if 'y_true' in eval_results and 'y_prob' in eval_results:
-                    y_true = eval_results['y_true']
-                    y_prob = eval_results['y_prob']
-                    
-                    # ROC curve
-                    fpr, tpr, _ = roc_curve(y_true, y_prob)
-                    
-                    plt.figure(figsize=(8, 6))
-                    plt.plot(fpr, tpr, color='darkorange', lw=2, 
-                           label=f'ROC curve (AUC = {metrics["AUC"]:.2f}%)')
-                    plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
-                    plt.xlim([0.0, 1.0])
-                    plt.ylim([0.0, 1.05])
-                    plt.xlabel('False Positive Rate')
-                    plt.ylabel('True Positive Rate')
-                    plt.title(f'ROC Curve for CNN ({args.cnn_model})')
-                    plt.legend(loc="lower right")
-                    
-                    # Save ROC curve
-                    output_images_dir = os.path.join('output', 'images')
-                    os.makedirs(output_images_dir, exist_ok=True)
-                    roc_curve_path = os.path.join(output_images_dir, f"CNN_{args.cnn_model}_roc_curve.png")
-                    plt.savefig(roc_curve_path, dpi=300, bbox_inches='tight')
-                    plt.close()
-                    logger.info(f"ROC curve saved to {roc_curve_path}")
-                    
-                    # Precision-recall curve
-                    precision, recall, _ = precision_recall_curve(y_true, y_prob)
-                    pr_auc = auc(recall, precision)
-                    metrics['PR_AUC'] = pr_auc * 100
-                    
-                    plt.figure(figsize=(8, 6))
-                    plt.plot(recall, precision, color='green', lw=2, 
-                           label=f'Precision-Recall curve (AUC = {pr_auc:.2f})')
-                           
-                    # Create CNN-specific output directory for additional visualizations
-                    output_dir = os.path.join('output', 'images', f'CNN_{args.cnn_model}')
-                    os.makedirs(output_dir, exist_ok=True)
-                    
-                    # Generate prediction histogram for CNN
-                    logger.info(f"Generating prediction histogram for CNN ({args.cnn_model})...")
-                    pred_hist_path = os.path.join(output_dir, "prediction_histogram.png")
-                    plt.figure(figsize=(10, 6))
-                    
-                    # Separate probabilities by true class
-                    y_prob_pos = y_prob[y_true == 1]
-                    y_prob_neg = y_prob[y_true == 0]
-                    
-                    plt.hist(y_prob_pos, bins=20, alpha=0.6, color='red', 
-                             label=f'True Basal-cell Carcinoma (BCC) (n={len(y_prob_pos)})')
-                    plt.hist(y_prob_neg, bins=20, alpha=0.6, color='green', 
-                             label=f'True Seborrheic Keratosis (SK) (n={len(y_prob_neg)})')
-                    
-                    plt.xlabel('Predicted Probability of Basal-cell Carcinoma (BCC)')
-                    plt.ylabel('Count')
-                    plt.title(f'Histogram of Prediction Probabilities for CNN ({args.cnn_model})')
-                    plt.legend()
-                    plt.grid(True, alpha=0.3)
-                    plt.savefig(pred_hist_path, dpi=300, bbox_inches='tight')
-                    plt.close()
-                    logger.info(f"Prediction histogram saved to {pred_hist_path}")
-                    
-                    # Generate F1 score vs. threshold curve for CNN
-                    logger.info(f"Generating F1 score curve for CNN ({args.cnn_model})...")
-                    f1_curve_path = os.path.join(output_dir, "f1_threshold_curve.png")
-                    plt.figure(figsize=(10, 6))
-                    
-                    # Calculate F1 score for different thresholds
-                    thresholds = np.linspace(0, 1, 100)
-                    f1_scores = []
-                    precision_scores = []
-                    recall_scores = []
-                    
-                    for threshold in thresholds:
-                        y_pred_t = (y_prob >= threshold).astype(int)
-                        f1 = f1_score(y_true, y_pred_t, zero_division="warn")
-                        precision = precision_score(y_true, y_pred_t, zero_division="warn")
-                        recall = recall_score(y_true, y_pred_t, zero_division="warn")
-                        
-                        f1_scores.append(f1)
-                        precision_scores.append(precision)
-                        recall_scores.append(recall)
-                    
-                    # Find threshold with best F1 score
-                    best_threshold_idx = np.argmax(f1_scores)
-                    best_threshold = thresholds[best_threshold_idx]
-                    best_f1 = f1_scores[best_threshold_idx]
-                    
-                    # Plot curves
-                    plt.plot(thresholds, f1_scores, 'b-', label='F1 Score')
-                    plt.plot(thresholds, precision_scores, 'g-', label='Precision')
-                    plt.plot(thresholds, recall_scores, 'r-', label='Recall')
-                    
-                    # Mark the best threshold
-                    plt.axvline(x=best_threshold, color='gray', linestyle='--', alpha=0.7)
-                    plt.plot(best_threshold, best_f1, 'bo', markersize=8, 
-                            label=f'Best Threshold = {best_threshold:.2f}, F1 = {best_f1:.2f}')
-                    
-                    plt.xlabel('Decision Threshold')
-                    plt.ylabel('Score')
-                    plt.title(f'F1 Score, Precision, and Recall vs. Decision Threshold for CNN ({args.cnn_model})')
-                    plt.legend(loc='best')
-                    plt.grid(True)
-                    plt.savefig(f1_curve_path, dpi=300, bbox_inches='tight')
-                    plt.close()
-                    logger.info(f"F1 score curve saved to {f1_curve_path}")
-                    
-                    # Generate calibration curve for CNN
-                    logger.info(f"Generating calibration curve for CNN ({args.cnn_model})...")
-                    calibration_curve_path = os.path.join(output_dir, "calibration_curve.png")
-                    plt.figure(figsize=(10, 6))
-                    
-                    # Calculate Brier score loss
-                    brier_score = brier_score_loss(y_true, y_prob)
-                    
-                    # Calculate calibration curve
-                    fraction_of_positives, mean_predicted_value = calibration_curve(y_true, y_prob, n_bins=10)
-                    
-                    # Plot perfectly calibrated
-                    plt.plot([0, 1], [0, 1], linestyle='--', label='Perfectly calibrated')
-                    
-                    # Plot model calibration curve
-                    plt.plot(mean_predicted_value, fraction_of_positives, "s-", 
-                             label=f"CNN ({args.cnn_model}) (Brier score: {brier_score:.3f})")
-                    
-                    plt.ylabel("Fraction of positives (Empirical)")
-                    plt.xlabel("Mean predicted probability (Model)")
-                    plt.title(f'Calibration Curve for CNN ({args.cnn_model})')
-                    plt.legend(loc="best")
-                    plt.grid(True)
-                    plt.savefig(calibration_curve_path, dpi=300, bbox_inches='tight')
-                    plt.close()
-                    logger.info(f"Calibration curve saved to {calibration_curve_path}")
-                    
-                    # Continue with precision-recall curve (fixing the plot that was messed up in our edit)
-                    plt.figure(figsize=(8, 6))
-                    plt.plot(recall, precision, color='green', lw=2, 
-                           label=f'Precision-Recall curve (AUC = {pr_auc:.2f})')
-                    plt.xlabel('Recall')
-                    plt.ylabel('Precision')
-                    plt.ylim([0.0, 1.05])
-                    plt.xlim([0.0, 1.0])
-                    plt.title(f'Precision-Recall Curve for CNN ({args.cnn_model})')
-                    plt.legend(loc="lower left")
-                    
-                    # Save precision-recall curve
-                    output_images_dir = os.path.join('output', 'images')
-                    os.makedirs(output_images_dir, exist_ok=True)
-                    pr_curve_path = os.path.join(output_images_dir, f"CNN_{args.cnn_model}_precision_recall_curve.png")
-                    plt.savefig(pr_curve_path, dpi=300, bbox_inches='tight')
-                    plt.close()
-                    logger.info(f"Precision-Recall curve saved to {pr_curve_path}")
-                    
-                    # Update results with PR-AUC
-                    results[f"CNN ({args.cnn_model})"] = metrics
+                logger.info(f"CNN Results:")
+                logger.info(f"  Accuracy: {cnn_metrics['AC']:.2f}%")
+                logger.info(f"  F1 Score: {cnn_metrics['F1']:.2f}%")
+                logger.info(f"  AUC: {cnn_metrics['AUC']:.2f}%")
 
             except Exception as e:
                 logger.error(f"Error training CNN: {str(e)}")
                 traceback.print_exc()
 
-        # Generate summary table if multiple classifiers were trained
+        # **GENERATE SUMMARY**
         if len(results) > 1:
-            generate_summary_table(results, logger, table_num=1, title="BCC vs SK Detection Model Training Summary")
+            generate_summary_table(results, logger, table_num=1, 
+                                 title="BCC vs SK Detection - Segmented Images Training Summary")
         elif len(results) == 1:
             logger.info(f"Trained 1 classifier: {list(results.keys())[0]}")
         else:
@@ -1161,8 +552,6 @@ def train(args, logger):
     except Exception as e:
         logger.error(f"Error during training: {str(e)}")
         raise
-
-        # Load U-Net once globally
 
 def clean_and_preprocess_features(X, feature_names=None, logger=None):
     """

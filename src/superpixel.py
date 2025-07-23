@@ -11,21 +11,38 @@ class SuperpixelGenerator:
         self.sigma = sigma
         self.logger = logging.getLogger(__name__)
 
-    def generate_superpixels(self, image):
-        """Generate superpixels for an image using SLIC."""
+
+    def generate_superpixels_with_mask(self, image, lesion_mask, save_visualization=False, image_name=None):
+        """Generate superpixels only within the lesion area with optional visualization"""
         try:
-            # Apply SLIC algorithm to generate superpixels
-            segments = slic(
-                image,
-                n_segments=self.n_segments,
-                compactness=self.compactness,
-                sigma=self.sigma,
-                start_label=0
-            )
+            from skimage.segmentation import slic
+            
+            # Reduce number of segments for pre-segmented lesions
+            effective_segments = max(10, self.n_segments // 2)
+            
+            print(f"Generating {effective_segments} superpixels for masked image")
+            
+            # Apply SLIC only to lesion area
+            segments = slic(image, 
+                        n_segments=effective_segments, 
+                        compactness=self.compactness, 
+                        start_label=1,
+                        mask=lesion_mask,  # Only segment lesion area
+                        channel_axis=-1 if len(image.shape) == 3 else None)
+            
+            # Ensure background pixels are labeled as 0
+            segments[~lesion_mask] = 0
+            
+            # Count actual segments created
+            unique_segments = np.unique(segments[segments > 0])
+            print(f"Successfully created {len(unique_segments)} superpixel segments")
+            
             return segments
+            
         except Exception as e:
-            self.logger.error(f"Error generating superpixels: {str(e)}")
-            raise
+            print(f"Error in masked superpixel generation: {str(e)}")
+            # Fallback to regular segmentation
+            return self.generate_superpixels(image)
 
     def compute_superpixel_features(self, image, segments):
         """Compute features for each superpixel."""

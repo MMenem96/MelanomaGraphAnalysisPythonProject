@@ -373,19 +373,20 @@ def extract_skin_lesion_segmentation():
     print(f"\nSegmentation extraction complete!")
     print(f"Created {bcc_segmented_count} BCC segmented images in bcc_segmented")
     print(f"Created {sk_segmented_count} SK segmented images in sk_segmented")
-
+    
 def apply_segmentation_mask(original_path, mask_path, output_path):
     """
-    Apply binary mask to original image to extract the segmented lesion.
+    Apply binary mask to original image to extract the segmented lesion with transparent background.
     
     Args:
         original_path: Path to original image
         mask_path: Path to binary mask
-        output_path: Path to save segmented image
+        output_path: Path to save segmented image (will be saved as PNG with transparency)
     """
     try:
         # Read original image
         original = cv2.imread(str(original_path))
+        original = cv2.cvtColor(original, cv2.COLOR_BGR2RGB)  # Convert to RGB
         
         # Read mask image
         mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
@@ -394,28 +395,30 @@ def apply_segmentation_mask(original_path, mask_path, output_path):
         if original.shape[:2] != mask.shape:
             mask = cv2.resize(mask, (original.shape[1], original.shape[0]))
         
-        # Normalize mask to 0-1 range
-        mask_normalized = mask.astype(np.float32) / 255.0
+        # Normalize mask to 0-255 range
+        mask_normalized = mask.astype(np.uint8)
         
-        # Expand mask to 3 channels for RGB image
-        mask_3channel = np.stack([mask_normalized] * 3, axis=-1)
+        # Create RGBA image (RGB + Alpha channel for transparency)
+        height, width = original.shape[:2]
+        segmented_rgba = np.zeros((height, width, 4), dtype=np.uint8)
         
-        # Apply mask to original image
-        segmented = original.astype(np.float32) * mask_3channel
+        # Copy RGB channels from original image
+        segmented_rgba[:, :, :3] = original
         
-        # Convert back to uint8
-        segmented = segmented.astype(np.uint8)
+        # Set alpha channel: 255 (opaque) where mask > 0, 0 (transparent) where mask = 0
+        segmented_rgba[:, :, 3] = mask_normalized
         
-        # Create a version with black background for optimal feature extraction
-        # Where mask is 0 (background), set to black for better feature quality
-        black_background = np.zeros_like(original)
-        segmented_with_black_bg = np.where(mask_3channel > 0, segmented, black_background)
+        # Save as PNG to preserve transparency
+        from PIL import Image
         
-        # Save the segmented image with black background
-        cv2.imwrite(str(output_path), segmented_with_black_bg)
+        # Convert to PIL Image and save
+        pil_image = Image.fromarray(segmented_rgba, 'RGBA')
+        pil_image.save(str(output_path), 'PNG')
+        
+        print(f"Created transparent segmented image: {output_path}")
         
     except Exception as e:
-        print(f"Error applying segmentation mask: {str(e)}")
+        print(f"Error applying segmentation mask with transparency: {str(e)}")
 
 if __name__ == "__main__":
     # print("Step 1: Filtering binary masks...")

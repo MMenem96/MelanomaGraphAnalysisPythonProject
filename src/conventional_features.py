@@ -34,8 +34,8 @@ class ConventionalFeatureExtractor:
             features.update(texture_features)
             
             # Extract dermoscopic-specific features (NEW)
-            # dermoscopic_features = self.extract_dermoscopic_features(image, mask)
-            # features.update(dermoscopic_features)
+            dermoscopic_features = self.extract_dermoscopic_features(image, mask)
+            features.update(dermoscopic_features)
             
             return features
             

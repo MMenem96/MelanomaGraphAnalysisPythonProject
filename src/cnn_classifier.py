@@ -882,25 +882,36 @@ class CNNBCCSKClassifier:
         except Exception as e:
             self.logger.error(f"Error plotting training history: {str(e)}")
 
-    def load_model(self, model_path):
-        """
-        Load a saved model.
-
-        Args:
-            model_path: Path to the saved model
-        """
+    def load_and_preprocess_image(self, image_path):
+        """Load and preprocess image with transparency support"""
         try:
-            self.model = tf.keras.models.load_model(model_path)
-            self.logger.info(f"Model loaded from {model_path}")
-
-            # Update feature counts
-            self._count_model_parameters()
-
-            return True
-
+            # Handle PNG transparency
+            if str(image_path).lower().endswith('.png'):
+                from PIL import Image
+                pil_image = Image.open(image_path)
+                
+                if pil_image.mode == 'RGBA':
+                    # Convert RGBA to RGB with white background
+                    background = Image.new('RGB', pil_image.size, (255, 255, 255))
+                    background.paste(pil_image, mask=pil_image.split()[-1])
+                    pil_image = background
+                
+                image = np.array(pil_image)
+            else:
+                image = cv2.imread(str(image_path))
+                image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            
+            # Resize to model input size
+            image = cv2.resize(image, (self.input_shape[0], self.input_shape[1]))
+            
+            # Normalize
+            image = image.astype(np.float32) / 255.0
+            
+            return image
+            
         except Exception as e:
-            self.logger.error(f"Error loading model: {str(e)}")
-            raise
+            print(f"Error loading image {image_path}: {str(e)}")
+            return None
 
     def visualize_model(self, output_dir='output'):
         """

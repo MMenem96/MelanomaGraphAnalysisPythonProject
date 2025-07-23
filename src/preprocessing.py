@@ -23,18 +23,26 @@ class ImagePreprocessor:
         self.artifact_removal_debug = False  # Set to True to save intermediate artifact detection results
 
     def load_image(self, image_path):
-        """Load and validate image."""
+        """Load and validate image with transparent background support."""
         try:
             # Validate file extension
             _, ext = os.path.splitext(image_path)
             if ext.lower() not in self.supported_formats:
                 raise ValueError(f"Unsupported image format: {ext}")
             
-            # Load image
+            # Load image with proper transparency handling
             img = Image.open(image_path)
 
-            # Convert to RGB if needed
-            if img.mode != 'RGB':
+            # Handle different image modes including transparency
+            if img.mode == 'RGBA':
+                # Convert RGBA to RGB with white background for segmented lesions
+                background = Image.new('RGB', img.size, (255, 255, 255))
+                background.paste(img, mask=img.split()[-1])  # Use alpha channel as mask
+                img = background
+                self.logger.info("Converted RGBA image to RGB with white background")
+            elif img.mode == 'P':
+                img = img.convert('RGB')
+            elif img.mode != 'RGB':
                 img = img.convert('RGB')
 
             # Step 1: Resample to 750x750 as specified in paper [52]
@@ -424,3 +432,116 @@ class ImagePreprocessor:
             
         except Exception as e:
             self.logger.warning(f"Could not save debug image: {str(e)}")
+
+    # NEW METHODS FOR TRANSPARENT BACKGROUND SUPPORT
+
+    def load_image_with_transparency_support(self, image_path):
+        """Load image with proper transparency handling for segmented lesions"""
+        try:
+            if str(image_path).lower().endswith('.png'):
+                # Load PNG with transparency using PIL
+                pil_image = Image.open(image_path)
+                
+                if pil_image.mode == 'RGBA':
+                    # Convert RGBA to RGB with white background
+                    background = Image.new('RGB', pil_image.size, (255, 255, 255))
+                    background.paste(pil_image, mask=pil_image.split()[-1])  # Use alpha as mask
+                    pil_image = background
+                elif pil_image.mode == 'P':
+                    pil_image = pil_image.convert('RGB')
+                
+                # Convert PIL to numpy array
+                image = np.array(pil_image)
+                
+            else:
+                # Regular image loading for JPG/JPEG
+                image = cv2.imread(str(image_path))
+                image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            
+            return image
+            
+        except Exception as e:
+            self.logger.error(f"Error loading image {image_path}: {str(e)}")
+            return None
+
+    def generate_lesion_mask_from_white_background(self, image, threshold=10):
+        """Generate mask for segmented lesion images with white backgrounds"""
+        try:
+            # Convert to grayscale
+            if len(image.shape) == 3:
+                gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+            else:
+                gray = image
+            
+            # For white background: lesion pixels are NOT white
+            mask = gray < (255 - threshold)
+            
+            # Clean up mask using morphological operations
+            from skimage.morphology import opening, closing, disk, remove_small_objects
+            mask = opening(mask, disk(2))
+            mask = closing(mask, disk(3))
+            mask = remove_small_objects(mask, min_size=50)  # Smaller for segmented lesions
+            
+            return mask.astype(bool)
+            
+        except Exception as e:
+            self.logger.warning(f"Error generating lesion mask: {str(e)}")
+            # Fallback: return full image mask
+            return np.ones(image.shape[:2], dtype=bool)
+
+    def preprocess_segmented_lesion(self, image, apply_full_preprocessing=True):
+        """
+        Preprocess segmented lesion images with transparent/white backgrounds.
+        
+        Args:
+            image: Segmented lesion image (numpy array)
+            apply_full_preprocessing: Whether to apply full preprocessing pipeline
+            
+        Returns:
+            Preprocessed image
+        """
+        try:
+            # Generate lesion mask first
+            lesion_mask = self.generate_lesion_mask_from_white_background(image)
+            
+            # Apply basic preprocessing for segmented images
+            if apply_full_preprocessing:
+                # Use existing preprocessing pipeline but skip artifact removal for segmented lesions
+                original_hair_removal = self.hair_removal_enabled
+                original_ruler_removal = self.ruler_removal_enabled
+                original_bubble_removal = self.bubble_removal_enabled
+                
+                # Disable artifact removal for already-segmented images
+                self.hair_removal_enabled = False
+                self.ruler_removal_enabled = False  
+                self.bubble_removal_enabled = False
+                
+                # Apply preprocessing
+                processed_image = self.preprocess(image)
+                
+                # Restore original settings
+                self.hair_removal_enabled = original_hair_removal
+                self.ruler_removal_enabled = original_ruler_removal
+                self.bubble_removal_enabled = original_bubble_removal
+                
+            else:
+                # Basic normalization only
+                processed_image = image.astype(float) / 255.0
+                
+                # Apply Gaussian smoothing
+                gaussian_filtered = np.zeros_like(processed_image)
+                for i in range(processed_image.shape[2]):
+                    gaussian_filtered[:,:,i] = cv2.GaussianBlur(processed_image[:,:,i], (3, 3), 0.5)
+                processed_image = gaussian_filtered
+                
+                # Apply CLAHE
+                processed_image = exposure.equalize_adapthist(processed_image, clip_limit=0.02)
+            
+            return processed_image, lesion_mask
+            
+        except Exception as e:
+            self.logger.error(f"Error preprocessing segmented lesion: {str(e)}")
+            # Return normalized image and full mask as fallback
+            normalized = image.astype(float) / 255.0
+            full_mask = np.ones(image.shape[:2], dtype=bool)
+            return normalized, full_mask
