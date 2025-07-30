@@ -67,7 +67,41 @@ Where:
 - max_samples_per_class = user-defined maximum samples per class
 - Balanced dataset size = min(N_bcc, N_sk) × 2
 
-### 2.3 Label Encoding Scheme
+### 2.3 Database Split Ratios
+
+The system implements a standard train/test split configuration:
+
+**Training/Testing Split:**
+```
+train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+```
+
+Where:
+- **Training Set: 80%** of total dataset
+- **Testing Set: 20%** of total dataset
+- **Validation: Cross-validation** (typically 5-fold stratified)
+- **Stratification:** Maintains class distribution across splits
+- **Random State:** Fixed seed (42) for reproducible results
+
+**Mathematical Representation:**
+```
+N_total = N_train + N_test
+N_train = 0.8 × N_total
+N_test = 0.2 × N_total
+```
+
+Where:
+- N_total = total number of samples
+- N_train = number of training samples
+- N_test = number of testing samples
+
+**Cross-Validation Strategy:**
+The system uses 5-fold stratified cross-validation on the training set:
+- **Fold Size:** N_train / 5 ≈ 16% of total dataset per fold
+- **Validation per fold:** 16% of total dataset
+- **Training per fold:** 64% of total dataset
+
+### 2.4 Label Encoding Scheme
 
 Binary classification labels are encoded as:
 - BCC (malignant): y = 1
