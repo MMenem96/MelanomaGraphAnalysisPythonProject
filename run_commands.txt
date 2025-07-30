@@ -19,3 +19,14 @@ Without feature reduction:
 python manual_run_main.py --mode train_features --feature_set full --feature_selection none --feature_classifiers rf,svm_rbf,svm_linear,knn,mlp,gb,logistic,xgboost --optimize --max-images-per-class 30
 
 python manual_run_main.py --mode train_features --feature_set full --feature_selection none --feature_classifiers all --optimize --max-images-per-class 30
+
+
+
+
+
+#Train model with Features only
+
+python manual_train_features.py \
+    --train-from-features \
+    --features-file output/features/extracted_features_full_20250729_192907.pkl \
+    --feature_classifiers all

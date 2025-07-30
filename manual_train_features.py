@@ -110,8 +110,20 @@ def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description='BCC vs SK Detection System')
 
+    #Feature file operations
+    parser.add_argument('--features-file', type=str, default=None,
+                        help='Path to saved features file for fast training')
+    parser.add_argument('--save-features-only', action='store_true',
+                        help='Only extract and save features, skip model training')
+    parser.add_argument('--train-from-features', action='store_true',
+                        help='Train models using previously saved features')
+    
+    #Custom model parameters
+    parser.add_argument('--custom-params', type=str, default=None,
+                        help='JSON file with custom model parameters')
+
     # Dataset paths
-    parser.add_argument('--bcc-dir', type=str, default='data/bcc_segmented',
+    parser.add_argument('--bcc-dir', type=str, default='data/bcc_segmented_augmented',
                         help='Directory containing Basal-cell Carcinoma (BCC) images')
     parser.add_argument('--sk-dir', type=str, default='data/sk_segmented',
                         help='Directory containing Seborrheic Keratosis (SK) images')
@@ -521,97 +533,32 @@ def generate_lesion_mask_from_transparent_background(image, threshold=10):
         # Fallback: return full image mask
         return np.ones(image.shape[:2], dtype=bool)
 
-def extract_features_with_proper_masking(feature_extractor, image, feature_set='full', logger=None):
-    """
-    Extract features using proper lesion masking for transparent/white background images.
-    """
-    try:
-        # Use the updated masking function
-        mask = generate_lesion_mask_from_transparent_background(image, threshold=10)
-        
-        if logger:
-            lesion_area = np.sum(mask)
-            total_area = mask.size
-            coverage = (lesion_area / total_area) * 100
-            logger.debug(f"Generated mask: {lesion_area} lesion pixels ({coverage:.1f}% coverage)")
-        
-        # Rest of your feature extraction code...
-        features = feature_extractor.extract_all_features(image, mask)
-        return features
-        
-    except Exception as e:
-        if logger:
-            logger.error(f"Feature extraction failed: {str(e)}")
-        return {}
-
-def extract_features_with_proper_masking(feature_extractor, image, feature_set='full', logger=None):
-    """
-    Extract features using proper lesion masking for black-background images.
-    
-    Args:
-        feature_extractor: ConventionalFeatureExtractor instance
-        image: RGB image with black background
-        feature_set: Type of features to extract
-        logger: Logger instance
-    
-    Returns:
-        features: Dictionary of extracted features
-    """
-    try:
-        # Generate proper mask from black background
-        mask = generate_lesion_mask_from_transparent_background(image)
-        
-        if logger:
-            lesion_area = np.sum(mask)
-            total_area = mask.size
-            coverage = (lesion_area / total_area) * 100
-            logger.debug(f"Generated mask: {lesion_area} lesion pixels ({coverage:.1f}% coverage)")
-        
-        # Extract features based on selected feature set with proper masking
-        if feature_set == 'full':
-            # Extract all available features with proper mask
-            features = feature_extractor.extract_all_features(image, mask)
-        elif feature_set == 'color':
-            # Only color features with proper mask
-            features = feature_extractor.extract_color_features(image, mask)
-        elif feature_set == 'texture':
-            # Only texture features with proper mask
-            features = feature_extractor.extract_texture_features(image, mask)
-        elif feature_set == 'shape':
-            # Only geometric features using the generated mask
-            features = feature_extractor.extract_geometric_features(mask)
-        elif feature_set == 'dermoscopy':
-            # Only dermoscopic features with proper mask
-            features = feature_extractor.extract_dermoscopic_features(image, mask)
-        else:
-            # Basic set - combine key features with proper masking
-            color_features = feature_extractor.extract_color_features(image, mask)
-            texture_features = feature_extractor.extract_texture_features(image, mask)
-            geometric_features = feature_extractor.extract_geometric_features(mask)
-            
-            # Select only key features from each category
-            features = {}
-            for key in color_features:
-                if any(x in key for x in ['mean', 'std', 'entropy', 'color_variance']):
-                    features[key] = color_features[key]
-            
-            for key in texture_features:
-                if any(x in key for x in ['glcm_contrast', 'glcm_homogeneity', 'wavelet_approx', 'gradient_mag']):
-                    features[key] = texture_features[key]
-                    
-            for key in geometric_features:
-                if any(x in key for x in ['area', 'perimeter', 'compactness', 'eccentricity']):
-                    features[key] = geometric_features[key]
-        
-        return features
-        
-    except Exception as e:
-        if logger:
-            logger.error(f"Error in feature extraction with masking: {str(e)}")
-        return {}
-
 """"""
-
+def load_image_with_transparency_support(image_path):
+    """Load PNG with transparency, convert transparent areas to white background."""
+    try:
+        from PIL import Image
+        import numpy as np
+        
+        # Load with PIL to preserve transparency
+        pil_image = Image.open(image_path)
+        
+        if pil_image.mode == 'RGBA':
+            # Create white background
+            background = Image.new('RGB', pil_image.size, (255, 255, 255))
+            # Paste lesion onto white background using alpha mask
+            background.paste(pil_image, mask=pil_image.split()[-1])
+            return np.array(background)
+        else:
+            return np.array(pil_image.convert('RGB'))
+            
+    except Exception as e:
+        # Fallback to OpenCV if PIL fails
+        import cv2
+        image = cv2.imread(image_path)
+        if image is not None:
+            return cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        return None
 def train_features(args, logger):
     """Train skin lesion classification models using conventional feature engineering approach with dermoscopic features.
     
@@ -629,7 +576,7 @@ def train_features(args, logger):
     """
 
     #Initializing the lesion segmenter
-    segmenter = SkinLesionProcessor() 
+    # segmenter = SkinLesionProcessor() 
 
     # Explicitly import the train_test_split function to make sure it's in scope
     from sklearn.model_selection import train_test_split
@@ -637,9 +584,7 @@ def train_features(args, logger):
         # Start timer
         start_time = time.time()
         
-        logger.info("Starting conventional feature engineering-based training WITH OPTIMIZED BLACK-BACKGROUND MASKING")
         logger.info(f"Feature set: {args.feature_set}, Selection method: {args.feature_selection}")
-        logger.info("Using automatic lesion mask generation from black-background segmented images")
         
         # Load image paths
         logger.info("Loading image paths")
@@ -678,8 +623,8 @@ def train_features(args, logger):
         # Track saved images for sampling
         saved_bcc_count = 0
         saved_sk_count = 0
-        max_sk_samples_per_class = 1229 
-        max_bcc_samples_per_class = 514 
+        max_sk_samples_per_class = 5 
+        max_bcc_samples_per_class = 5 
         
         # Extract features from all images
         logger.info("Extracting features from images...")
@@ -691,12 +636,14 @@ def train_features(args, logger):
                 logger.info(f"Processing image {idx+1}/{len(all_image_paths)}")
             
             try:
-                original_image = cv2.imread(image_path)
-                original_image=cv2.cvtColor(original_image, cv2.COLOR_BGR2RGB)    
+                original_image = load_image_with_transparency_support(image_path)
+                if original_image is None:
+                    logger.error(f"Failed to load image: {image_path}")
+                    continue
                 # results = segmenter.process_image(image_path, save_intermediate=False)
                 # image = results['segmented_area']
                 image = original_image.copy()
-                logger.debug(f"Preprocessing completed using MeghanaMsl method")
+                logger.debug(f"Loaded image with transparency support")
                 
                 # Save first 5 preprocessed images from each class for visualization
                 current_label = all_labels[idx]
@@ -748,11 +695,10 @@ def train_features(args, logger):
                         saved_sk_count += 1
                         # logger.info(f"Saved preprocessed SK image: {save_filename}")
                 
-                # Extract features using improved masking for black-background images
+               
                 logger.debug(f"Extracting {args.feature_set} features with proper lesion masking")
-                features = extract_features_with_proper_masking(
-                    feature_extractor, image, args.feature_set, logger
-                )
+                mask = generate_lesion_mask_from_transparent_background(image, threshold=10)
+                features = feature_extractor.extract_all_features(image, mask)
                 
                 features_list.append(features)
                 success_count += 1
@@ -842,6 +788,33 @@ def train_features(args, logger):
             expanded_feature_keys = cleaned_feature_names
         
         logger.info(f"Using {X.shape[1]} features after cleaning")
+
+
+        #Save extracted features to file**
+        feature_metadata = {
+            'feature_set': args.feature_set,
+            'feature_selection': args.feature_selection,
+            'total_images_processed': success_count,
+            'bcc_images': len(bcc_paths),
+            'sk_images': len(sk_paths),
+            'extraction_timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'original_feature_count': len(expanded_feature_keys),
+            'cleaned_feature_count': X.shape[1],
+            'dataset_info': {
+                'bcc_dir': args.bcc_dir,
+                'sk_dir': args.sk_dir,
+                'max_images_per_class': args.max_images_per_class
+            }
+        }
+        
+        # Save features to file
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        features_filepath = f"output/features/extracted_features_{args.feature_set}_{timestamp}.pkl"
+        
+        if save_features_to_file(X, all_labels, expanded_feature_keys, feature_metadata, features_filepath):
+            logger.info(f"Features successfully saved to {features_filepath}")
+        else:
+            logger.warning("Failed to save features to file")
 
 
         # Split data into training and testing sets
@@ -1606,6 +1579,405 @@ def train_features(args, logger):
         logger.error(f"Error in train_features: {str(e)}")
         traceback.print_exc()
 
+
+def save_features_to_file(X, y, feature_names, metadata, filepath):
+    """
+    Save extracted features, labels, and metadata to a file for later use.
+    
+    Args:
+        X: Feature matrix
+        y: Labels
+        feature_names: List of feature names
+        metadata: Dictionary with extraction metadata
+        filepath: Path to save the features
+    """
+    try:
+        import pickle
+        import numpy as np
+        
+        # Create the data package
+        feature_data = {
+            'features': X.astype(np.float32),  # Save space with float32
+            'labels': y.astype(np.int32),
+            'feature_names': feature_names,
+            'metadata': metadata,
+            'version': '1.0',
+            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        }
+        
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        
+        # Save using pickle for Python objects
+        with open(filepath, 'wb') as f:
+            pickle.dump(feature_data, f, protocol=pickle.HIGHEST_PROTOCOL)
+        
+        # Also save as CSV for external analysis
+        csv_path = filepath.replace('.pkl', '_features.csv')
+        feature_df = pd.DataFrame(X, columns=feature_names)
+        feature_df['label'] = y
+        feature_df.to_csv(csv_path, index=False)
+        
+        # Save metadata as JSON
+        json_path = filepath.replace('.pkl', '_metadata.json')
+        with open(json_path, 'w') as f:
+            json.dump(metadata, f, indent=2)
+        
+        print(f"Features saved to: {filepath}")
+        print(f"CSV export saved to: {csv_path}")
+        print(f"Metadata saved to: {json_path}")
+        
+        return True
+        
+    except Exception as e:
+        print(f"Error saving features: {str(e)}")
+        return False
+
+def load_features_from_file(filepath):
+    """
+    Load previously saved features from file.
+    
+    Args:
+        filepath: Path to the saved features file
+        
+    Returns:
+        X, y, feature_names, metadata
+    """
+    try:
+        import pickle
+        
+        with open(filepath, 'rb') as f:
+            feature_data = pickle.load(f)
+        
+        return (
+            feature_data['features'],
+            feature_data['labels'],
+            feature_data['feature_names'],
+            feature_data['metadata']
+        )
+        
+    except Exception as e:
+        print(f"Error loading features: {str(e)}")
+        return None, None, None, None
+    
+
+def train_models_from_features(features_filepath, args, logger, custom_params=None):
+    """
+    Train models using previously extracted features.
+    
+    Args:
+        features_filepath: Path to saved features file
+        args: Command line arguments (for model configuration)
+        logger: Logger instance
+        custom_params: Optional dictionary with custom model parameters
+    """
+    try:
+        # Load features
+        logger.info(f"Loading features from {features_filepath}")
+        X, y, feature_names, metadata = load_features_from_file(features_filepath)
+        
+        if X is None:
+            logger.error("Failed to load features")
+            return
+        
+        logger.info(f"Loaded features: {X.shape[0]} samples, {X.shape[1]} features")
+        logger.info(f"Feature extraction metadata: {metadata.get('extraction_timestamp', 'Unknown')}")
+        
+        # **ADD FEATURE CLEANING HERE - THIS WAS MISSING!**
+        logger.info("Cleaning loaded features to prevent infinite/NaN values...")
+        X_clean, variance_selector, cleaned_feature_names = clean_and_preprocess_features(
+            X, feature_names, logger
+        )
+        
+        if X_clean is None:
+            logger.error("Feature cleaning failed. Cannot proceed with training.")
+            return
+        
+        # Update feature matrix and names
+        X = X_clean
+        if cleaned_feature_names is not None:
+            feature_names = cleaned_feature_names
+        
+        logger.info(f"Using {X.shape[1]} features after cleaning")
+        
+        # Split data
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.2, random_state=42, stratify=y
+        )
+        
+        # Ensure integer labels
+        y_train = y_train.astype(np.int32)
+        y_test = y_test.astype(np.int32)
+        
+        logger.info(f"Training set: {X_train.shape}, Test set: {X_test.shape}")
+        
+        # Apply feature selection if specified
+        selector = None
+        if args.feature_selection != 'none':
+            logger.info(f"Applying feature selection: {args.feature_selection}")
+            
+            if args.feature_selection == 'mutual_info':
+                selector = SelectKBest(mutual_info_classif, k=min(args.n_features, X_train.shape[1]))
+            elif args.feature_selection == 'chi2':
+                X_train_min = X_train.min(axis=0)
+                X_train = X_train - X_train_min
+                X_test = X_test - X_train_min
+                selector = SelectKBest(chi2, k=min(args.n_features, X_train.shape[1]))
+            elif args.feature_selection == 'f_test':
+                selector = SelectKBest(f_classif, k=min(args.n_features, X_train.shape[1]))
+            elif args.feature_selection == 'rfe':
+                base_model = RandomForestClassifier(n_estimators=100, random_state=42)
+                selector = RFE(estimator=base_model, n_features_to_select=min(args.n_features, X_train.shape[1]))
+            
+            X_train = selector.fit_transform(X_train, y_train)
+            X_test = selector.transform(X_test)
+            
+            selected_indices = selector.get_support(indices=True)
+            selected_feature_names = [feature_names[i] for i in selected_indices]
+            logger.info(f"Selected {len(selected_feature_names)} features")
+        else:
+            selected_feature_names = feature_names
+        
+        # **IMPROVED SCALING WITH BETTER ERROR HANDLING**
+        logger.info("Applying feature scaling...")
+        
+        # Check for remaining issues before scaling
+        inf_count = np.isinf(X_train).sum()
+        nan_count = np.isnan(X_train).sum()
+        
+        if inf_count > 0 or nan_count > 0:
+            logger.warning(f"Found {inf_count} inf and {nan_count} NaN values before scaling. Applying additional cleaning...")
+            
+            # Replace any remaining inf values
+            X_train = np.where(np.isposinf(X_train), np.finfo(np.float64).max / 1e10, X_train)
+            X_train = np.where(np.isneginf(X_train), np.finfo(np.float64).min / 1e10, X_train)
+            X_test = np.where(np.isposinf(X_test), np.finfo(np.float64).max / 1e10, X_test)
+            X_test = np.where(np.isneginf(X_test), np.finfo(np.float64).min / 1e10, X_test)
+            
+            # Replace any remaining NaN values with median
+            from sklearn.impute import SimpleImputer
+            imputer = SimpleImputer(strategy='median')
+            X_train = imputer.fit_transform(X_train)
+            X_test = imputer.transform(X_test)
+        
+        # Try robust scaling first, then standard scaling
+        from sklearn.preprocessing import RobustScaler, StandardScaler
+        
+        try:
+            scaler = RobustScaler()
+            X_train = scaler.fit_transform(X_train)
+            X_test = scaler.transform(X_test)
+            logger.info("Applied robust scaling to features")
+        except Exception as e:
+            logger.warning(f"Robust scaling failed: {str(e)}. Trying standard scaling.")
+            try:
+                scaler = StandardScaler()
+                X_train = scaler.fit_transform(X_train)
+                X_test = scaler.transform(X_test)
+                logger.info("Applied standard scaling to features")
+            except Exception as e2:
+                logger.warning(f"Standard scaling also failed: {str(e2)}. Using min-max scaling.")
+                from sklearn.preprocessing import MinMaxScaler
+                scaler = MinMaxScaler()
+                X_train = scaler.fit_transform(X_train)
+                X_test = scaler.transform(X_test)
+                logger.info("Applied min-max scaling to features")
+        
+        # Final validation
+        if np.any(np.isinf(X_train)) or np.any(np.isnan(X_train)):
+            logger.error("Still have infinite/NaN values after cleaning and scaling!")
+            logger.info("Applying emergency clipping...")
+            X_train = np.clip(X_train, -1e10, 1e10)
+            X_test = np.clip(X_test, -1e10, 1e10)
+            
+            # Replace any NaN with zeros as last resort
+            X_train = np.nan_to_num(X_train, nan=0.0, posinf=1e10, neginf=-1e10)
+            X_test = np.nan_to_num(X_test, nan=0.0, posinf=1e10, neginf=-1e10)
+            logger.info("Applied emergency value cleaning")
+        
+        logger.info(f"Final scaled feature ranges: train min={np.min(X_train):.2e}, train max={np.max(X_train):.2e}")
+        
+        # **USE EXISTING CLASSIFIERS DICTIONARY INSTEAD OF RECREATING**
+        classifiers = {}
+        
+        # Handle 'all' option
+        if args.feature_classifiers.lower() == 'all':
+            requested_classifiers = list(CLASSIFIERS.keys())
+        else:
+            # Map short names to full classifier names
+            name_mapping = {
+                'rf': 'RF',
+                'svm_rbf': 'SVM (RBF)',
+                'svm_linear': 'SVM (Linear)',
+                'svm_sigmoid': 'SVM (Sigmoid)',
+                'svm_poly': 'SVM (Poly)',
+                'knn': 'KNN',
+                'mlp': 'MLP',
+                'gb': 'Gradient Boosting',
+                'logistic': 'Logistic Regression',
+                'xgboost': 'XGBoost'
+            }
+            
+            requested_short_names = args.feature_classifiers.lower().split(',')
+            requested_classifiers = []
+            
+            for short_name in requested_short_names:
+                if short_name in name_mapping:
+                    full_name = name_mapping[short_name]
+                    if full_name in CLASSIFIERS:
+                        requested_classifiers.append(full_name)
+                    else:
+                        logger.warning(f"Classifier '{full_name}' not found in CLASSIFIERS dictionary")
+                else:
+                    logger.warning(f"Unknown classifier short name: '{short_name}'")
+        
+        # Initialize classifiers using CLASSIFIERS dictionary
+        for clf_name in requested_classifiers:
+            if clf_name in CLASSIFIERS:
+                clf_config = CLASSIFIERS[clf_name]
+                
+                # Start with default parameters from CLASSIFIERS
+                params = clf_config['params'].copy()
+                
+                # Override with custom parameters if provided
+                if custom_params:
+                    # Map full names to short names for custom params lookup
+                    reverse_mapping = {
+                        'RF': 'rf',
+                        'SVM (RBF)': 'svm_rbf',
+                        'SVM (Linear)': 'svm_linear',
+                        'SVM (Sigmoid)': 'svm_sigmoid',
+                        'SVM (Poly)': 'svm_poly',
+                        'KNN': 'knn',
+                        'MLP': 'mlp',
+                        'Gradient Boosting': 'gb',
+                        'Logistic Regression': 'logistic',
+                        'XGBoost': 'xgboost'
+                    }
+                    
+                    short_name = reverse_mapping.get(clf_name)
+                    if short_name and short_name in custom_params:
+                        logger.info(f"Applying custom parameters for {clf_name}")
+                        params.update(custom_params[short_name])
+                
+                # Create classifier instance
+                try:
+                    clf = clf_config['class'](**params)
+                    classifiers[clf_name] = clf
+                    logger.info(f"Initialized {clf_name} with parameters: {params}")
+                except Exception as e:
+                    logger.error(f"Error initializing {clf_name}: {str(e)}")
+            else:
+                logger.warning(f"Classifier '{clf_name}' not found in CLASSIFIERS dictionary")
+        
+        if not classifiers:
+            logger.warning("No valid classifiers specified. Using Random Forest as default.")
+            rf_config = CLASSIFIERS['RF']
+            classifiers['RF'] = rf_config['class'](**rf_config['params'])
+        
+        logger.info(f"Training {len(classifiers)} classifiers: {', '.join(classifiers.keys())}")
+        
+        # Train and evaluate models (rest remains the same)
+        results = {}
+        
+        for name, clf in classifiers.items():
+            logger.info(f"Training and evaluating {name}")
+            
+            try:
+                # Determine CV strategy
+                class_counts = np.bincount(y_train)
+                min_class_count = min(class_counts[class_counts > 0])
+                
+                if min_class_count < 5:
+                    cv_strategy = StratifiedKFold(n_splits=2, shuffle=True, random_state=42)
+                elif min_class_count < 10:
+                    cv_strategy = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)
+                else:
+                    cv_strategy = 5
+                
+                # Cross-validation
+                cv_scores = cross_validate(
+                    clf, X_train, y_train, 
+                    cv=cv_strategy,
+                    scoring=['accuracy', 'f1', 'precision', 'recall', 'roc_auc']
+                )
+                
+                # Train final model
+                clf.fit(X_train, y_train)
+                
+                # Evaluate on test set
+                y_pred = clf.predict(X_test)
+                y_pred_proba = clf.predict_proba(X_test)[:, 1] if hasattr(clf, "predict_proba") else None
+                
+                # Calculate metrics
+                accuracy = accuracy_score(y_test, y_pred)
+                precision = precision_score(y_test, y_pred, zero_division=0.0)
+                recall = recall_score(y_test, y_pred, zero_division=0.0)
+                f1 = f1_score(y_test, y_pred, zero_division=0.0)
+                specificity = specificity_score(y_test, y_pred)
+                roc_auc = roc_auc_score(y_test, y_pred_proba) if y_pred_proba is not None else None
+                
+                # Log results
+                logger.info(f"{name} - Test Results:")
+                logger.info(f"  Accuracy: {accuracy:.4f}")
+                logger.info(f"  Precision: {precision:.4f}")
+                logger.info(f"  Recall: {recall:.4f}")
+                logger.info(f"  F1 Score: {f1:.4f}")
+                logger.info(f"  Specificity: {specificity:.4f}")
+                if roc_auc is not None:
+                    logger.info(f"  ROC AUC: {roc_auc:.4f}")
+                
+                # Store results
+                results[name] = {
+                    'AC': accuracy * 100,
+                    'PR': precision * 100,
+                    'SN': recall * 100,
+                    'F1': f1 * 100,
+                    'SP': specificity * 100,
+                    'AUC': roc_auc * 100 if roc_auc is not None else None,
+                    'NUM_FEATURES': len(selected_feature_names),
+                    'NUM_SELECTED': len(selected_feature_names)
+                }
+                
+                # Save model
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                safe_name = name.replace(" ", "_").replace("(", "").replace(")", "").lower()
+                model_dir = f'model/feature_based_fast/{safe_name}_{timestamp}'
+                os.makedirs(model_dir, exist_ok=True)
+                
+                dump(clf, f'{model_dir}/model.joblib')
+                dump(scaler, f'{model_dir}/scaler.joblib')
+                if selector:
+                    dump(selector, f'{model_dir}/selector.joblib')
+                
+                # Save classifier configuration for reproducibility
+                config_path = f'{model_dir}/classifier_config.json'
+                clf_config = CLASSIFIERS[clf_name]  # Get config from CLASSIFIERS dict
+                with open(config_path, 'w') as f:
+                    json.dump({
+                        'name': name,
+                        'class': clf_config['class'].__name__,
+                        'parameters': clf.get_params() if hasattr(clf, 'get_params') else str(clf)
+                    }, f, indent=2)
+                
+                logger.info(f"Model saved to {model_dir}")
+                
+            except Exception as e:
+                logger.error(f"Error training {name}: {str(e)}")
+        
+        # Generate summary
+        if results:
+            generate_summary_table(results, logger, table_num=6, 
+                                 title="Fast Model Training Results")
+        
+        return results
+        
+    except Exception as e:
+        logger.error(f"Error in train_models_from_features: {str(e)}")
+        traceback.print_exc()
+        return None
+
+
 def main():
     """Main entry point."""
     # Set up logging
@@ -1622,7 +1994,9 @@ def main():
     os.makedirs('output/images', exist_ok=True)
     os.makedirs('output/metrics', exist_ok=True)
     os.makedirs('output/features', exist_ok=True)
-    os.makedirs('output/summaries', exist_ok=True)
+    os.makedirs('output/summaries', exist_ok=True)  
+    os.makedirs('output/features', exist_ok=True)
+    os.makedirs('model/feature_based_fast', exist_ok=True)
 
     logger.info(f"Running in {args.mode} mode")
     
@@ -1640,8 +2014,28 @@ def main():
         if args.optimize:
             logger.info("Hyperparameter optimization is enabled")
 
-    # Execute based on mode
-    train_features(args, logger)
+        # Load custom parameters if provided
+    custom_params = None
+    if args.custom_params:
+        try:
+            with open(args.custom_params, 'r') as f:
+                custom_params = json.load(f)
+            logger.info(f"Loaded custom parameters from {args.custom_params}")
+        except Exception as e:
+            logger.warning(f"Failed to load custom parameters: {str(e)}")
+    
+    if args.train_from_features:
+        # Train models from saved features
+        if not args.features_file:
+            logger.error("--features-file required when using --train-from-features")
+            return
+        
+        logger.info(f"Training models from saved features: {args.features_file}")
+        train_models_from_features(args.features_file, args, logger, custom_params)
+        
+    else:
+        # Normal training (extract features and train models)
+        train_features(args, logger)        
 
 if __name__ == "__main__":
     main()

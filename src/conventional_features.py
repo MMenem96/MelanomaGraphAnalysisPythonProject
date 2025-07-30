@@ -32,10 +32,30 @@ class ConventionalFeatureExtractor:
             # Extract texture features
             texture_features = self.extract_texture_features(image, mask)
             features.update(texture_features)
+
+            abcde_features = self.extract_abcde_features(image, mask)
+            features.update(abcde_features)
             
-            # Extract dermoscopic-specific features (NEW)
-            dermoscopic_features = self.extract_dermoscopic_features(image, mask)
-            features.update(dermoscopic_features)
+            # Enhanced color features
+            enhanced_color_features = self.extract_enhanced_color_features(image, mask)
+            features.update(enhanced_color_features)
+            
+            """
+            # Surface pattern features (BCC vs SK specific)
+            surface_features = self.extract_surface_pattern_features(image, mask)
+            features.update(surface_features)
+
+            # Multi-scale texture features
+            multiscale_features = self.extract_multiscale_texture_features(image, mask)
+            features.update(multiscale_features)
+            """
+
+            # # Extract dermoscopic-specific features (NEW)
+            # dermoscopic_features = self.extract_dermoscopic_features(image, mask)
+            # features.update(dermoscopic_features)
+
+
+
             
             return features
             
@@ -609,3 +629,440 @@ class ConventionalFeatureExtractor:
         except Exception as e:
             self.logger.error(f"Error extracting dermoscopic features: {str(e)}")
             return {}
+        
+
+
+    def extract_abcde_features(self, image, mask):
+        """Extract ABCDE rule features - critical for dermatological classification."""
+        try:
+            features = {}
+            
+            # A - ASYMMETRY (Enhanced)
+            # Calculate asymmetry in multiple directions
+            center_y, center_x = ndimage.center_of_mass(mask)
+            
+            # Horizontal asymmetry
+            left_half = mask[:, :int(center_x)]
+            right_half = np.fliplr(mask[:, int(center_x):])
+            min_width = min(left_half.shape[1], right_half.shape[1])
+            if min_width > 0:
+                left_resized = left_half[:, :min_width]
+                right_resized = right_half[:, :min_width]
+                horizontal_asymmetry = np.sum(np.abs(left_resized.astype(int) - right_resized.astype(int))) / np.sum(mask)
+                features['asymmetry_horizontal'] = float(horizontal_asymmetry)
+            else:
+                features['asymmetry_horizontal'] = 0.0
+            
+            # Vertical asymmetry
+            top_half = mask[:int(center_y), :]
+            bottom_half = np.flipud(mask[int(center_y):, :])
+            min_height = min(top_half.shape[0], bottom_half.shape[0])
+            if min_height > 0:
+                top_resized = top_half[:min_height, :]
+                bottom_resized = bottom_half[:min_height, :]
+                vertical_asymmetry = np.sum(np.abs(top_resized.astype(int) - bottom_resized.astype(int))) / np.sum(mask)
+                features['asymmetry_vertical'] = float(vertical_asymmetry)
+            else:
+                features['asymmetry_vertical'] = 0.0
+            
+            # B - BORDER IRREGULARITY (Enhanced)
+            from skimage.segmentation import find_boundaries
+            border = find_boundaries(mask, mode='inner')
+            border_coords = np.column_stack(np.where(border))
+            
+            if len(border_coords) > 10:
+                # Calculate border fractal dimension
+                features['border_fractal_dimension'] = self.calculate_fractal_dimension(border_coords)
+                
+                # Border curvature analysis
+                if len(border_coords) > 20:
+                    features['border_curvature_variance'] = self.calculate_curvature_variance(border_coords)
+                else:
+                    features['border_curvature_variance'] = 0.0
+            else:
+                features['border_fractal_dimension'] = 1.0
+                features['border_curvature_variance'] = 0.0
+            
+            # C - COLOR VARIATION (Enhanced) - STABLE VERSION
+            if len(image.shape) == 3 and image.shape[2] >= 3:
+                rgb_image = image[:,:,:3]
+                hsv_image = color.rgb2hsv(rgb_image)
+                
+                # STABLE: Use variance-based color count instead of K-means
+                masked_rgb = rgb_image[mask]
+                if len(masked_rgb) > 10:
+                    # Calculate color diversity based on variance
+                    color_var = np.var(masked_rgb, axis=0)
+                    total_color_variance = np.sum(color_var)
+                    
+                    # Empirical mapping: higher variance = more colors
+                    if total_color_variance < 0.01:
+                        dominant_colors = 1
+                    elif total_color_variance < 0.05:
+                        dominant_colors = 2
+                    elif total_color_variance < 0.15:
+                        dominant_colors = 3
+                    elif total_color_variance < 0.30:
+                        dominant_colors = 4
+                    else:
+                        dominant_colors = min(6, int(total_color_variance * 10))
+                    
+                    features['dominant_colors_count'] = dominant_colors
+                else:
+                    features['dominant_colors_count'] = 1
+                
+                # These are stable - keep them
+                features['color_entropy_rgb'] = self.calculate_color_entropy(rgb_image, mask)
+                features['color_entropy_hsv'] = self.calculate_color_entropy(hsv_image, mask)
+                features['color_uniformity'] = self.calculate_color_uniformity(rgb_image, mask)
+            
+            # D - DIAMETER-related features
+            regionprops = measure.regionprops(mask.astype(int))
+            if regionprops:
+                props = regionprops[0]
+                features['equivalent_diameter'] = float(props.equivalent_diameter)
+                features['major_axis_length'] = float(props.major_axis_length)
+                features['minor_axis_length'] = float(props.minor_axis_length)
+                features['axis_ratio'] = float(props.major_axis_length / props.minor_axis_length) if props.minor_axis_length > 0 else 1.0
+            
+            return features
+            
+        except Exception as e:
+            self.logger.error(f"Error in ABCDE features: {str(e)}")
+            return {}
+
+    def calculate_fractal_dimension(self, coords):
+        """Calculate fractal dimension of border."""
+        try:
+            # Box counting method
+            scales = np.logspace(0.5, 2.5, num=10, dtype=int)
+            counts = []
+            
+            for scale in scales:
+                # Create grid
+                grid_size = scale
+                x_bins = np.arange(coords[:, 1].min(), coords[:, 1].max() + grid_size, grid_size)
+                y_bins = np.arange(coords[:, 0].min(), coords[:, 0].max() + grid_size, grid_size)
+                
+                # Count occupied boxes
+                hist, _, _ = np.histogram2d(coords[:, 0], coords[:, 1], bins=[y_bins, x_bins])
+                counts.append(np.count_nonzero(hist))
+            
+            # Fit line to log-log plot
+            if len(counts) > 1 and all(c > 0 for c in counts):
+                coeffs = np.polyfit(np.log(scales), np.log(counts), 1)
+                return float(-coeffs[0])
+            else:
+                return 1.0
+        except:
+            return 1.0
+
+    def calculate_curvature_variance(self, coords):
+        """Calculate variance in border curvature."""
+        try:
+            if len(coords) < 5:
+                return 0.0
+            
+            # Calculate curvature at each point
+            curvatures = []
+            for i in range(2, len(coords) - 2):
+                # Use 5-point stencil for curvature calculation
+                p1, p2, p3, p4, p5 = coords[i-2:i+3]
+                
+                # Calculate derivatives
+                dx1 = p3[1] - p1[1]
+                dy1 = p3[0] - p1[0]
+                dx2 = p5[1] - p3[1]
+                dy2 = p5[0] - p3[0]
+                
+                # Calculate curvature
+                denom = (dx1**2 + dy1**2)**1.5
+                if denom > 0:
+                    curvature = abs(dx1 * dy2 - dy1 * dx2) / denom
+                    curvatures.append(curvature)
+            
+            return float(np.var(curvatures)) if curvatures else 0.0
+        except:
+            return 0.0
+
+    def count_dominant_colors(self, image, mask):
+        """Count number of dominant colors in the lesion."""
+        try:
+            from sklearn.cluster import KMeans
+            
+            masked_pixels = image[mask].reshape(-1, 3)
+            if len(masked_pixels) < 10:
+                return 1
+            
+            # Use k-means to find color clusters
+            max_k = min(8, len(masked_pixels))
+            best_k = 1
+            
+            for k in range(2, max_k + 1):
+                try:
+                    kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
+                    kmeans.fit(masked_pixels)
+                    
+                    # Calculate within-cluster sum of squares
+                    wcss = kmeans.inertia_
+                    
+                    # Simple elbow method approximation
+                    if k == 2:
+                        prev_wcss = wcss
+                        best_k = 2
+                    else:
+                        improvement = (prev_wcss - wcss) / prev_wcss
+                        if improvement < 0.1:  # If improvement is small, stop
+                            break
+                        best_k = k
+                        prev_wcss = wcss
+                except:
+                    break
+            
+            return best_k
+        except:
+            return 1
+
+    def calculate_color_entropy(self, image, mask):
+        """Calculate color entropy."""
+        try:
+            masked_pixels = image[mask]
+            if len(masked_pixels) == 0:
+                return 0.0
+            
+            # Convert to quantized color space
+            quantized = (masked_pixels * 15).astype(int)  # 16 levels per channel
+            
+            # Create color histogram
+            colors, counts = np.unique(quantized.reshape(-1, quantized.shape[-1]), axis=0, return_counts=True)
+            
+            # Calculate entropy
+            probabilities = counts / np.sum(counts)
+            entropy = -np.sum(probabilities * np.log2(probabilities + 1e-10))
+            
+            return float(entropy)
+        except:
+            return 0.0
+
+    def calculate_color_uniformity(self, image, mask):
+        """Calculate color uniformity (inverse of color variation)."""
+        try:
+            masked_pixels = image[mask]
+            if len(masked_pixels) == 0:
+                return 1.0
+            
+            # Calculate coefficient of variation for each channel
+            cv_values = []
+            for channel in range(image.shape[2]):
+                channel_data = masked_pixels[:, channel]
+                mean_val = np.mean(channel_data)
+                std_val = np.std(channel_data)
+                cv = std_val / mean_val if mean_val > 0 else 0
+                cv_values.append(cv)
+            
+            # Uniformity is inverse of average coefficient of variation
+            avg_cv = np.mean(cv_values)
+            uniformity = 1.0 / (1.0 + avg_cv)
+            
+            return float(uniformity)
+        except:
+            return 1.0
+        
+    def extract_surface_pattern_features(self, image, mask):
+        """Extract surface pattern features specific to BCC vs SK differentiation."""
+        try:
+            features = {}
+            
+            # Convert to grayscale for pattern analysis
+            if len(image.shape) == 3:
+                gray = color.rgb2gray(image[:,:,:3])
+            else:
+                gray = image.copy()
+                
+            # 1. SURFACE ROUGHNESS (SK tends to be rougher - "stuck-on" appearance)
+            # Local standard deviation as roughness measure
+            roughness = ndimage.generic_filter(gray, np.std, size=5)
+            roughness_masked = roughness[mask]
+            
+            if len(roughness_masked) > 0:
+                features['surface_roughness_mean'] = float(np.mean(roughness_masked))
+                features['surface_roughness_std'] = float(np.std(roughness_masked))
+                features['surface_roughness_percentile_90'] = float(np.percentile(roughness_masked, 90))
+                
+                # Percentage of high-roughness areas
+                high_roughness_threshold = np.percentile(roughness_masked, 75)
+                high_roughness_ratio = np.sum(roughness > high_roughness_threshold) / np.sum(mask)
+                features['high_roughness_area_ratio'] = float(high_roughness_ratio)
+            
+            # 2. SMOOTHNESS PATTERNS (BCC tends to be smoother)
+            # Calculate local gradients
+            grad_x = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
+            grad_y = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
+            gradient_magnitude = np.sqrt(grad_x**2 + grad_y**2)
+            
+            grad_masked = gradient_magnitude[mask]
+            if len(grad_masked) > 0:
+                features['gradient_smoothness'] = float(1.0 / (1.0 + np.mean(grad_masked)))
+                features['gradient_variation'] = float(np.std(grad_masked))
+            
+            # 3. PATTERN REGULARITY
+            # Use autocorrelation to detect regular patterns
+            try:
+                # Create a small region around center for autocorrelation
+                center_y, center_x = ndimage.center_of_mass(mask)
+                size = min(50, mask.shape[0]//3, mask.shape[1]//3)
+                
+                y_start = max(0, int(center_y - size//2))
+                y_end = min(mask.shape[0], int(center_y + size//2))
+                x_start = max(0, int(center_x - size//2))
+                x_end = min(mask.shape[1], int(center_x + size//2))
+                
+                region = gray[y_start:y_end, x_start:x_end]
+                region_mask = mask[y_start:y_end, x_start:x_end]
+                
+                if np.sum(region_mask) > 100:  # Need sufficient area
+                    # Normalize region
+                    region_normalized = (region - np.mean(region)) / (np.std(region) + 1e-10)
+                    
+                    # Calculate 2D autocorrelation
+                    autocorr = cv2.matchTemplate(region_normalized, region_normalized, cv2.TM_CCORR_NORMED)
+                    
+                    # Pattern regularity is measured by secondary peaks in autocorrelation
+                    if autocorr.size > 1:
+                        # Remove center peak
+                        center_autocorr = autocorr.shape[0]//2, autocorr.shape[1]//2
+                        autocorr_copy = autocorr.copy()
+                        autocorr_copy[center_autocorr] = 0
+                        
+                        features['pattern_regularity'] = float(np.max(autocorr_copy))
+                    else:
+                        features['pattern_regularity'] = 0.0
+                else:
+                    features['pattern_regularity'] = 0.0
+            except:
+                features['pattern_regularity'] = 0.0
+            
+            return features
+            
+        except Exception as e:
+            self.logger.error(f"Error in surface pattern features: {str(e)}")
+            return {}
+        
+    def extract_multiscale_texture_features(self, image, mask):
+        """Extract multi-scale texture features optimized for BCC vs SK."""
+        try:
+            features = {}
+            
+            # Convert to grayscale
+            if len(image.shape) == 3:
+                gray = color.rgb2gray(image[:,:,:3])
+            else:
+                gray = image.copy()
+            
+            # Multi-scale analysis at different window sizes
+            scales = [3, 5, 7, 9, 11]
+            
+            for scale in scales:
+                # Local variance (texture measure)
+                local_var = ndimage.generic_filter(gray, np.var, size=scale)
+                var_masked = local_var[mask]
+                
+                if len(var_masked) > 0:
+                    features[f'texture_variance_scale_{scale}'] = float(np.mean(var_masked))
+                    features[f'texture_variance_std_scale_{scale}'] = float(np.std(var_masked))
+                
+                # Local entropy
+                def local_entropy(region):
+                    if len(region) == 0:
+                        return 0
+                    hist, _ = np.histogram(region, bins=8, range=(0, 1))
+                    hist = hist[hist > 0]
+                    return -np.sum((hist/np.sum(hist)) * np.log2(hist/np.sum(hist))) if len(hist) > 0 else 0
+                
+                local_ent = ndimage.generic_filter(gray, local_entropy, size=scale)
+                ent_masked = local_ent[mask]
+                
+                if len(ent_masked) > 0:
+                    features[f'texture_entropy_scale_{scale}'] = float(np.mean(ent_masked))
+            
+            # Texture directionality (important for vessel patterns in BCC)
+            try:
+                # Calculate gradient orientation
+                grad_x = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
+                grad_y = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
+                orientation = np.arctan2(grad_y, grad_x)
+                
+                # Calculate orientation histogram
+                orientation_masked = orientation[mask]
+                if len(orientation_masked) > 0:
+                    hist, _ = np.histogram(orientation_masked, bins=8, range=(-np.pi, np.pi))
+                    hist_normalized = hist / np.sum(hist)
+                    
+                    # Directionality is measured by concentration in orientation histogram
+                    features['texture_directionality'] = float(1.0 - stats.entropy(hist_normalized + 1e-10))
+                    features['dominant_orientation_strength'] = float(np.max(hist_normalized))
+            except:
+                features['texture_directionality'] = 0.0
+                features['dominant_orientation_strength'] = 0.0
+            
+            return features
+            
+        except Exception as e:
+            self.logger.error(f"Error in multiscale texture features: {str(e)}")
+            return {}
+        
+
+
+
+    def extract_enhanced_color_features(self, image, mask):
+            """Extract enhanced color features for better BCC vs SK discrimination."""
+            try:
+                features = {}
+                
+                if len(image.shape) == 3 and image.shape[2] >= 3:
+                    rgb_image = image[:,:,:3]
+                    hsv_image = color.rgb2hsv(rgb_image)
+                    lab_image = color.rgb2lab(rgb_image)
+                
+                    # Color moments (more robust than basic statistics)
+                    for space_name, space_image in [('rgb', rgb_image), ('hsv', hsv_image), ('lab', lab_image)]:
+                        for channel in range(space_image.shape[2]):
+                            channel_data = space_image[:,:,channel][mask]
+                            
+                            if len(channel_data) > 0:
+                                # Central moments
+                                mean_val = np.mean(channel_data)
+                                features[f'{space_name}_{channel}_moment_1'] = float(mean_val)
+                                features[f'{space_name}_{channel}_moment_2'] = float(np.mean((channel_data - mean_val)**2))
+                                features[f'{space_name}_{channel}_moment_3'] = float(np.mean((channel_data - mean_val)**3))
+                                features[f'{space_name}_{channel}_moment_4'] = float(np.mean((channel_data - mean_val)**4))
+                                
+                                # Percentile-based features (robust to outliers)
+                                features[f'{space_name}_{channel}_p10'] = float(np.percentile(channel_data, 10))
+                                features[f'{space_name}_{channel}_p25'] = float(np.percentile(channel_data, 25))
+                                features[f'{space_name}_{channel}_p75'] = float(np.percentile(channel_data, 75))
+                                features[f'{space_name}_{channel}_p90'] = float(np.percentile(channel_data, 90))
+                                features[f'{space_name}_{channel}_iqr'] = float(np.percentile(channel_data, 75) - np.percentile(channel_data, 25))
+                    
+                    # Color ratios (important for distinguishing BCC vs SK)
+                    rgb_masked = rgb_image[mask]
+                    if len(rgb_masked) > 0:
+                        r_mean, g_mean, b_mean = np.mean(rgb_masked, axis=0)
+                        
+                        # Traditional color ratios
+                        total_intensity = r_mean + g_mean + b_mean
+                        if total_intensity > 0:
+                            features['red_ratio'] = float(r_mean / total_intensity)
+                            features['green_ratio'] = float(g_mean / total_intensity)
+                            features['blue_ratio'] = float(b_mean / total_intensity)
+                        
+                        # Specific ratios for dermatology
+                        features['rg_ratio'] = float(r_mean / g_mean) if g_mean > 0 else 1.0
+                        features['rb_ratio'] = float(r_mean / b_mean) if b_mean > 0 else 1.0
+                        features['gb_ratio'] = float(g_mean / b_mean) if b_mean > 0 else 1.0
+                
+                return features
+                
+            except Exception as e:
+                self.logger.error(f"Error in enhanced color features: {str(e)}")
+                return {}
