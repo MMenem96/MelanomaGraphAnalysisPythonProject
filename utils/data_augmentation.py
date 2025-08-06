@@ -6,6 +6,22 @@ import shutil
 from tqdm import tqdm
 import logging
 
+# Import StyleGAN2 generator with better error handling
+try:
+    # Try importing PyTorch first
+    import torch
+    import torchvision
+    
+    # Then import our StyleGAN2 module
+    from stylegan2_bcc_generator import generate_bcc_images_stylegan2
+    STYLEGAN2_AVAILABLE = True
+    print("✅ StyleGAN2-ADA ready for BCC generation!")
+    
+except ImportError as e:
+    STYLEGAN2_AVAILABLE = False
+    print(f"⚠️  StyleGAN2 dependencies missing: {str(e)}")
+    print("Run: pip install torch torchvision torchaudio")
+
 class DataAugmentation:
     """
     Safe data augmentation class for medical skin lesion images.
@@ -326,6 +342,86 @@ class DataAugmentation:
         else:
             self.logger.info(f"Directory {output_dir} does not exist - nothing to clean up")
 
+    def generate_bcc_images_stylegan2_ada(self,
+                                         num_images,
+                                         output_dir="data/bcc_gan_generated",
+                                         bcc_data_dir="data/bcc_segmented", 
+                                         model_path=None,
+                                         train_if_needed=True,
+                                         epochs=1000,
+                                         seed=42):
+        """
+        Generate synthetic BCC images using StyleGAN2-ADA.
+        
+        **OPTIMIZED FOR BCC LESION GENERATION**
+        
+        Args:
+            num_images (int): EXACT number of images to generate (YOU control this!)
+            output_dir (str): Directory to save generated images
+            bcc_data_dir (str): Source BCC images for training
+            model_path (str): Path to pre-trained model (optional)
+            train_if_needed (bool): Train new model if none exists
+            epochs (int): Training epochs (1000+ recommended)
+            seed (int): Random seed for reproducible results
+            
+        Returns:
+            tuple: (success, generated_count, model_path)
+            
+        Example Usage:
+            # Generate exactly 500 BCC images
+            augmenter = DataAugmentation()
+            success, count, model = augmenter.generate_bcc_images_stylegan2_ada(
+                num_images=500,
+                output_dir="data/bcc_stylegan_generated"
+            )
+        """
+        
+        if not STYLEGAN2_AVAILABLE:
+            self.logger.error("❌ StyleGAN2 not available! Install PyTorch and dependencies.")
+            return False, 0, None
+        
+        print(f"\n🎨 STYLEGAN2-ADA BCC IMAGE GENERATION")
+        print(f"="*70)
+        print(f"🎯 Target images: {num_images}")
+        print(f"📁 Output directory: {output_dir}")
+        print(f"📚 Training data: {bcc_data_dir}")
+        print(f"🔧 Parameters optimized for BCC lesions")
+        print(f"="*70)
+        
+        try:
+            
+            # Generate images using StyleGAN2-ADA
+            success, generated_count, final_model_path = generate_bcc_images_stylegan2(
+                num_images=num_images,
+                output_dir=output_dir,
+                bcc_data_dir=bcc_data_dir,
+                model_path=model_path,
+                train_if_needed=train_if_needed,
+                epochs=epochs,
+                seed=seed
+            )
+            
+            if success:
+                print(f"\n✅ StyleGAN2-ADA Generation Completed!")
+                print(f"🎯 Generated: {generated_count} BCC images")
+                print(f"📁 Location: {output_dir}")
+                print(f"💾 Model: {final_model_path}")
+                print(f"🔬 Ready for training integration!")
+                
+                # Log success
+                self.logger.info(f"StyleGAN2-ADA generated {generated_count} BCC images")
+                
+            else:
+                print(f"❌ StyleGAN2-ADA generation failed!")
+                self.logger.error("StyleGAN2-ADA generation failed")
+            
+            return success, generated_count, final_model_path
+            
+        except Exception as e:
+            self.logger.error(f"Error in StyleGAN2-ADA generation: {str(e)}")
+            print(f"❌ StyleGAN2-ADA Error: {str(e)}")
+            return False, 0, None
+
 # Convenience function for direct usage
 def augment_bcc_dataset(input_dir="data/bcc_segmented", 
                        output_dir="data/bcc_segmented_augmented",
@@ -377,11 +473,38 @@ def augment_bcc_dataset(input_dir="data/bcc_segmented",
 
 def main():
     """
-    Main function to run 2x data augmentation directly.
-    Configure your paths and settings here.
+    Main function to run data augmentation.
+    Choose between traditional 2x flip or StyleGAN2-ADA generation.
     """
     
-    print("🔬 BCC DATA AUGMENTATION - 2x HORIZONTAL FLIP")
+    print("🔬 BCC DATA AUGMENTATION SYSTEM")
+    print("="*60)
+    print("Choose augmentation method:")
+    print("1. Safe 2x Horizontal Flip (Traditional - Proven)")
+    print("2. StyleGAN2-ADA Generation (AI - Experimental)")
+    print("3. Both (Traditional + StyleGAN2)")
+    print("="*60)
+    
+    # Get user choice
+    choice = input("Enter choice (1, 2, or 3): ").strip()
+    
+    if choice == "1":
+        # Traditional 2x augmentation
+        return run_traditional_augmentation()
+    elif choice == "2":
+        # StyleGAN2-ADA generation
+        return run_stylegan2_generation()
+    elif choice == "3":
+        # Both methods
+        return run_combined_augmentation()
+    else:
+        print("❌ Invalid choice! Using traditional 2x augmentation...")
+        return run_traditional_augmentation()
+
+def run_traditional_augmentation():
+    """Run traditional 2x horizontal flip augmentation."""
+    
+    print("\n🔬 BCC DATA AUGMENTATION - 2x HORIZONTAL FLIP")
     print("="*50)
     
     # CONFIGURE YOUR PATHS HERE
@@ -472,19 +595,149 @@ def main():
         traceback.print_exc()
         return False
 
+def run_stylegan2_generation():
+    """Run StyleGAN2-ADA image generation."""
+    
+    print("\n🎨 BCC STYLEGAN2-ADA GENERATION")
+    print("="*50)
+    
+    # Get number of images to generate
+    while True:
+        try:
+            num_images = int(input("Enter number of images to generate (e.g., 500): "))
+            if num_images > 0:
+                break
+            else:
+                print("❌ Please enter a positive number!")
+        except ValueError:
+            print("❌ Please enter a valid number!")
+    
+    # Configure paths
+    input_directory = "data/bcc_segmented"
+    output_directory = "data/bcc_stylegan_generated"
+    
+    print(f"\n📁 Input (training) directory: {input_directory}")
+    print(f"📁 Output directory: {output_directory}")
+    print(f"🎯 Target images: {num_images}")
+    print(f"🤖 Method: StyleGAN2-ADA")
+    
+    # Setup logging
+    logging.basicConfig(level=logging.INFO)
+    
+    try:
+        # Create augmenter
+        augmenter = DataAugmentation()
+        
+        # Check if input directory exists
+        if not os.path.exists(input_directory):
+            print(f"❌ ERROR: Input directory '{input_directory}' does not exist!")
+            return False
+        
+        # Count source images
+        original_files = augmenter._get_image_files(input_directory)
+        print(f"📊 Source BCC images: {len(original_files)}")
+        
+        if len(original_files) == 0:
+            print(f"❌ ERROR: No images found in '{input_directory}'")
+            return False
+        
+        # Generate using StyleGAN2-ADA
+        print(f"\n🚀 Starting StyleGAN2-ADA generation...")
+        success, generated_count, model_path = augmenter.generate_bcc_images_stylegan2_ada(
+            num_images=num_images,
+            output_dir=output_directory,
+            bcc_data_dir=input_directory,
+            epochs=1000,  # Adjust based on your needs
+            seed=42
+        )
+        
+        # Final summary
+        print(f"\n" + "="*60)
+        print(f"🎯 STYLEGAN2-ADA RESULTS")
+        print(f"="*60)
+        
+        if success:
+            print(f"✅ SUCCESS! StyleGAN2-ADA completed!")
+            print(f"🎯 Generated images: {generated_count}")
+            print(f"📁 Output directory: {output_directory}")
+            print(f"💾 Model saved: {model_path}")
+            print(f"\n🎯 Ready to use generated images for training!")
+        else:
+            print(f"❌ StyleGAN2-ADA generation failed!")
+        
+        print(f"="*60)
+        return success
+        
+    except Exception as e:
+        print(f"❌ FATAL ERROR: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+def run_combined_augmentation():
+    """Run both traditional and StyleGAN2 augmentation."""
+    
+    print("\n🔬🎨 COMBINED AUGMENTATION (Traditional + StyleGAN2)")
+    print("="*60)
+    
+    # Run traditional first
+    print("STEP 1: Traditional 2x Horizontal Flip")
+    traditional_success = run_traditional_augmentation()
+    
+    if traditional_success:
+        print("\n" + "="*60)
+        print("STEP 2: StyleGAN2-ADA Generation")
+        stylegan_success = run_stylegan2_generation()
+        
+        if stylegan_success:
+            print("\n✅ COMBINED AUGMENTATION COMPLETED!")
+            print("🎯 You now have:")
+            print("   - Traditional 2x augmented images")
+            print("   - StyleGAN2-ADA generated images")
+            print("   - Use both for maximum dataset size!")
+            return True
+        else:
+            print("\n⚠️  Traditional augmentation succeeded, StyleGAN2 failed")
+            return False
+    else:
+        print("\n❌ Traditional augmentation failed - skipping StyleGAN2")
+        return False
+
 # Main execution - this runs when you hit the run button
 if __name__ == "__main__":
+    # Create an instance of DataAugmentation class first
+    augmenter = DataAugmentation()
     
-    # Direct run with main() function
-    print("🔬 Starting BCC Data Augmentation (2x Horizontal Flip)...")
+    # Then call the method on the instance
+    success, count, model_path = augmenter.generate_bcc_images_stylegan2_ada(
+        num_images=100,                    # YOU specify exact count
+        output_dir="data/bcc_stylegan_generated",
+        epochs=5,                        # Good for 514 training images
+        seed=42                            # Reproducible results
+    )
+    
+    # Print results
+    if success:
+        print(f"✅ Generated {count} BCC images successfully!")
+        print(f"📁 Images saved in: data/bcc_stylegan_generated")
+        print(f"💾 Model saved at: {model_path}")
+    else:
+        print(f"❌ Generation failed!")
+
+
+        
+    """
+    # Run the enhanced main function with StyleGAN2 support
+    print("🔬 Starting BCC Data Augmentation System...")
     success = main()
     
     if success:
-        print("\n🎉 2x Augmentation completed successfully!")
-        print("You can now train with the balanced dataset.")
+        print("\n🎉 Augmentation completed successfully!")
+        print("You can now train with the enhanced dataset.")
     else:
         print("\n💥 Augmentation failed!")
         print("Check the error messages above.")
     
     # Keep the window open (optional)
     input("\nPress Enter to exit...")
+    """

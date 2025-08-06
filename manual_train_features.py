@@ -45,7 +45,7 @@ from src.classifier import BCCSKClassifier
 from src.conventional_features import ConventionalFeatureExtractor
 
 from src.segmentation.skin_lesion_processor import SkinLesionProcessor
-
+from catboost import CatBoostClassifier
 
 # Dictionary of available classifiers
 CLASSIFIERS = {
@@ -89,6 +89,10 @@ CLASSIFIERS = {
     'XGBoost': {
         'class': XGBClassifier,
         'params': {'n_estimators': 100, 'random_state': 42, 'base_score': 0.5, 'eval_metric': 'logloss'}
+    },
+    'CatBoost': {
+        'class': CatBoostClassifier,
+        'params': {'verbose': False, 'random_state': 42, 'iterations': 200, 'learning_rate': 0.1, 'depth': 6}
     }
 }
 
@@ -185,7 +189,7 @@ def parse_args():
                         help='Number of features to select when using feature selection')
     parser.add_argument('--feature_classifiers', type=str, default='all',
                         help='Comma-separated list of classifiers to train with feature engineering')
-    parser.add_argument('--optimize', action='store_true', default= True,
+    parser.add_argument('--optimize', action='store_true', default= False,
                         help='Perform hyperparameter optimization for feature-based classifiers')
     
     parser.add_argument('--apply-mask', action='store_true',
@@ -576,7 +580,7 @@ def train_features(args, logger):
     """
 
     #Initializing the lesion segmenter
-    # segmenter = SkinLesionProcessor() 
+    segmenter = SkinLesionProcessor() 
 
     # Explicitly import the train_test_split function to make sure it's in scope
     from sklearn.model_selection import train_test_split
@@ -640,10 +644,17 @@ def train_features(args, logger):
                 if original_image is None:
                     logger.error(f"Failed to load image: {image_path}")
                     continue
-                # results = segmenter.process_image(image_path, save_intermediate=False)
-                # image = results['segmented_area']
-                image = original_image.copy()
-                logger.debug(f"Loaded image with transparency support")
+                 # Step 1: Convert to grayscale for hair detection
+                grayscale_image = segmenter.convert_to_grayscale(original_image)
+                
+                # Step 2: Apply hair detection and removal
+                combined_hair_mask, blackhat_image, tophat_image = segmenter.apply_combined_hair_detection(grayscale_image)
+                
+                # Step 3: Apply inpainting to remove detected hairs
+                inpainted_image = segmenter.apply_inpainting(original_image, combined_hair_mask)
+                
+                # Step 4: Apply Gaussian blur for smoothing
+                image = segmenter.apply_gaussian_blur(inpainted_image)
                 
                 # Save first 5 preprocessed images from each class for visualization
                 current_label = all_labels[idx]
@@ -913,71 +924,50 @@ def train_features(args, logger):
         
         logger.info(f"Scaled feature ranges: train min={np.min(X_train):.2e}, train max={np.max(X_train):.2e}")
         
-        # Prepare classifiers based on user selection
+        # Prepare classifiers using CLASSIFIERS dictionary (same as fast training)
         classifiers = {}
-        
-        # Handle 'all' option for feature classifiers
+
+        # Handle 'all' option
         if args.feature_classifiers.lower() == 'all':
-            requested_classifiers = ['rf', 'svm_rbf', 'svm_linear', 'knn', 'mlp', 'gb', 'logistic', 'xgboost']
+            requested_classifiers = list(CLASSIFIERS.keys())
         else:
-            requested_classifiers = args.feature_classifiers.lower().split(',')
-        
-        # Initialize classifiers with robust parameters
+            # Map short names to full classifier names
+            name_mapping = {
+                'rf': 'RF',
+                'svm_rbf': 'SVM (RBF)',
+                'svm_linear': 'SVM (Linear)',
+                'svm_sigmoid': 'SVM (Sigmoid)',
+                'svm_poly': 'SVM (Poly)',
+                'knn': 'KNN',
+                'mlp': 'MLP',
+                'gb': 'Gradient Boosting',
+                'logistic': 'Logistic Regression',
+                'xgboost': 'XGBoost',
+                'catboost': 'CatBoost'
+            }
+            
+            requested_short_names = args.feature_classifiers.lower().split(',')
+            requested_classifiers = []
+            
+            for short_name in requested_short_names:
+                short_name = short_name.strip()
+                if short_name in name_mapping:
+                    full_name = name_mapping[short_name]
+                    if full_name in CLASSIFIERS:
+                        requested_classifiers.append(full_name)
+
+        # Initialize classifiers using CLASSIFIERS dictionary
         for clf_name in requested_classifiers:
-            if clf_name == 'rf':
-                clf = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1)
-                classifiers['Random Forest'] = clf
-            elif clf_name == 'svm_rbf':
-                clf = SVC(kernel='rbf', C=1.0, gamma='scale', probability=True, 
-                         random_state=42, class_weight='balanced')
-                classifiers['SVM (RBF)'] = clf
-            elif clf_name == 'svm_linear':
-                clf = SVC(kernel='linear', C=1.0, probability=True, 
-                         random_state=42, class_weight='balanced')
-                classifiers['SVM (Linear)'] = clf
-            elif clf_name == 'knn':
-                clf = KNeighborsClassifier(n_neighbors=5)
-                classifiers['KNN'] = clf
-            elif clf_name == 'mlp':
-                clf = MLPClassifier(
-                    hidden_layer_sizes=(50,), 
-                    max_iter=500,
-                    random_state=42,
-                    early_stopping=True,
-                    validation_fraction=0.1,
-                    alpha=0.01
-                )
-                classifiers['MLP'] = clf
-            elif clf_name == 'xgboost':
-                clf = XGBClassifier(
-                    n_estimators=100, 
-                    random_state=42, 
-                    missing=np.nan,
-                    tree_method='hist',
-                    eval_metric='logloss'
-                )
-                classifiers['XGBoost'] = clf
-            elif clf_name == 'gb':
-                clf = GradientBoostingClassifier(
-                    n_estimators=100, 
-                    random_state=42,
-                    validation_fraction=0.1,
-                    n_iter_no_change=10
-                )
-                classifiers['Gradient Boosting'] = clf
-            elif clf_name == 'logistic':
-                clf = LogisticRegression(
-                    max_iter=2000,
-                    random_state=42,
-                    C=1.0,
-                    class_weight='balanced'
-                )
-                classifiers['Logistic Regression'] = clf
-                
+            if clf_name in CLASSIFIERS:
+                clf_config = CLASSIFIERS[clf_name]
+                clf = clf_config['class'](**clf_config['params'])
+                classifiers[clf_name] = clf
+
         if not classifiers:
             logger.warning("No valid classifiers specified. Using Random Forest as default.")
-            classifiers['Random Forest'] = RandomForestClassifier(n_estimators=100, random_state=42)
-        
+            rf_config = CLASSIFIERS['RF']
+            classifiers['RF'] = rf_config['class'](**rf_config['params'])
+
         logger.info(f"Training {len(classifiers)} classifiers: {', '.join(classifiers.keys())}")
         
         # Hyperparameter optimization if specified

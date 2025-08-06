@@ -140,12 +140,12 @@ class SkinLesionProcessor:
 
     def apply_blackhat_morphology(self, grayscale_image):
         """Apply blackhat morphological operation to detect dark hairs"""
-        kernel = cv2.getStructuringElement(1, (5, 5))
+        kernel = cv2.getStructuringElement(1, (7, 7))
         return cv2.morphologyEx(grayscale_image, cv2.MORPH_BLACKHAT, kernel)
 
     def apply_tophat_morphology(self, grayscale_image):
         """Apply tophat morphological operation to detect light/white hairs"""
-        kernel = cv2.getStructuringElement(1, (5, 5))
+        kernel = cv2.getStructuringElement(1, (7, 7))
         return cv2.morphologyEx(grayscale_image, cv2.MORPH_TOPHAT, kernel)
 
     def apply_combined_hair_detection(self, grayscale_image):
@@ -318,9 +318,22 @@ class SkinLesionProcessor:
         if not os.path.exists(image_path):
             raise FileNotFoundError(f"Image file not found: {image_path}")
         
-        
-        # Step 1: Load original image
+        # Step 1: Load original image with proper format handling
         original_image = io.imread(image_path)
+        
+        # 🔧 CRITICAL FIX: Handle RGBA/transparency in PNG files
+        if len(original_image.shape) == 3:
+            if original_image.shape[2] == 4:  # RGBA image
+                # Convert RGBA to RGB by removing alpha channel
+                original_image = original_image[:, :, :3]
+            elif original_image.shape[2] == 1:  # Grayscale with extra dimension
+                original_image = np.stack([original_image.squeeze()] * 3, axis=2)
+        elif len(original_image.shape) == 2:  # Pure grayscale
+            original_image = np.stack([original_image] * 3, axis=2)
+        
+        # Ensure image is uint8
+        if original_image.dtype != np.uint8:
+            original_image = (original_image * 255).astype(np.uint8)
         
         # Step 2: Convert to grayscale
         grayscale_image = self.convert_to_grayscale(original_image)
@@ -352,11 +365,12 @@ class SkinLesionProcessor:
             io.imsave(self.output_dir / f"{base_name}_04_inpainted.jpg", inpainted_image)
             io.imsave(self.output_dir / f"{base_name}_05_gaussian.jpg", gaussian_blurred_image)
             cv2.imwrite(str(self.output_dir / f"{base_name}_06_mask.jpg"), 
-                       img_as_ubyte(predicted_mask.squeeze()))
+                    img_as_ubyte(predicted_mask.squeeze()))
             io.imsave(self.output_dir / f"{base_name}_07_segmented_area.jpg", 
-                     segmented_area.astype(np.uint8))
+                    segmented_area.astype(np.uint8))
             io.imsave(self.output_dir / f"{base_name}_08_isolated_lesion.jpg", 
-                     isolated_lesion.astype(np.uint8))
+                    isolated_lesion.astype(np.uint8))
+        
         # Return all results
         return {
             'original_image': original_image,
@@ -364,6 +378,7 @@ class SkinLesionProcessor:
             'blackhat_image': blackhat_image,
             'inpainted_image': inpainted_image,
             'gaussian_blurred_image': gaussian_blurred_image,
+            'segmentation_mask': predicted_mask,
             'segmentation_mask': predicted_mask,
             'segmented_area': segmented_area,
             'isolated_lesion': isolated_lesion,
