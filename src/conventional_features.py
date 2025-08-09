@@ -255,7 +255,7 @@ class ConventionalFeatureExtractor:
             masked_gray = gray.copy()
             masked_gray[~mask] = 0
             
-            # NEW: Apply contrast enhancement to improve feature extraction
+            # Contrast enhancement to improve feature extraction
             masked_gray_enhanced = filters.rank.enhance_contrast(
                 (masked_gray * 255).astype(np.uint8), 
                 footprint=np.ones((3, 3)),
@@ -1011,9 +1011,6 @@ class ConventionalFeatureExtractor:
             self.logger.error(f"Error in multiscale texture features: {str(e)}")
             return {}
         
-
-
-
     def extract_enhanced_color_features(self, image, mask):
             """Extract enhanced color features for better BCC vs SK discrimination."""
             try:
