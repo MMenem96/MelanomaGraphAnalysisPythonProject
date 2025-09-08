@@ -1968,64 +1968,366 @@ def train_models_from_features(features_filepath, args, logger, custom_params=No
         return None
 
 
+# def main():
+#     """Main entry point."""
+#     # Set up logging
+#     logger = setup_logging()
+
+#     # Parse arguments
+#     args = parse_args()
+
+#     # Create necessary directories
+#     os.makedirs('data/bcc', exist_ok=True)
+#     os.makedirs('data/sk', exist_ok=True)
+#     os.makedirs('model', exist_ok=True)
+#     os.makedirs('output', exist_ok=True)
+#     os.makedirs('output/images', exist_ok=True)
+#     os.makedirs('output/metrics', exist_ok=True)
+#     os.makedirs('output/features', exist_ok=True)
+#     os.makedirs('output/summaries', exist_ok=True)  
+#     os.makedirs('output/features', exist_ok=True)
+#     os.makedirs('model/feature_based_fast', exist_ok=True)
+
+#     logger.info(f"Running in {args.mode} mode")
+    
+#     if args.mode == 'train':
+#         logger.info(f"Training graph-based models with classifiers: '{args.classifiers}'")
+#         # Display CNN configuration if applicable
+#         if 'cnn' in args.classifiers.lower() or args.classifiers.lower() == 'all':
+#             logger.info(f"CNN configuration: {args.cnn_model} architecture, " +
+#                        f"{args.input_size}x{args.input_size} input size, " +
+#                        f"{args.epochs} epochs, batch size {args.batch_size}")
+#     elif args.mode == 'train_features':
+#         logger.info(f"Training with conventional feature engineering approach")
+#         logger.info(f"Feature set: {args.feature_set}, Feature selection: {args.feature_selection}")
+#         logger.info(f"Classifiers: {args.feature_classifiers}")
+#         if args.optimize:
+#             logger.info("Hyperparameter optimization is enabled")
+
+#         # Load custom parameters if provided
+#     custom_params = None
+#     if args.custom_params:
+#         try:
+#             with open(args.custom_params, 'r') as f:
+#                 custom_params = json.load(f)
+#             logger.info(f"Loaded custom parameters from {args.custom_params}")
+#         except Exception as e:
+#             logger.warning(f"Failed to load custom parameters: {str(e)}")
+    
+#     if args.train_from_features:
+#         # Train models from saved features
+#         if not args.features_file:
+#             logger.error("--features-file required when using --train-from-features")
+#             return
+        
+#         logger.info(f"Training models from saved features: {args.features_file}")
+#         train_models_from_features(args.features_file, args, logger, custom_params)
+        
+#     else:
+#         # Normal training (extract features and train models)
+#         train_features(args, logger)        
+
+
+def visualize_preprocessing_steps(image_path, output_path=None):
+    print("Started preprocessing steps visualization")
+    from pathlib import Path
+    try:
+        from src.segmentation.skin_lesion_processor import SkinLesionProcessor
+        segmenter = SkinLesionProcessor()
+        
+        def load_image_with_transparency_support(image_path):
+            try:
+                from PIL import Image
+                pil_image = Image.open(image_path)
+                
+                if pil_image.mode == 'RGBA':
+                    background = Image.new('RGB', pil_image.size, (255, 255, 255))
+                    background.paste(pil_image, mask=pil_image.split()[-1])
+                    return np.array(background)
+                else:
+                    return np.array(pil_image.convert('RGB'))
+                    
+            except Exception as e:
+                image = cv2.imread(image_path)
+                if image is not None:
+                    return cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                return None
+        
+        original_image = load_image_with_transparency_support(image_path)
+        if original_image is None:
+            print(f"Error: Could not load image from {image_path}")
+            return False
+        
+        grayscale_image = segmenter.convert_to_grayscale(original_image)
+        apply_blackhat_morphology_with_visualization(grayscale_image, show_plots=True)
+
+        combined_hair_mask, blackhat_image, tophat_image = segmenter.apply_combined_hair_detection(grayscale_image)
+        
+        inpainted_image = segmenter.apply_inpainting(original_image, combined_hair_mask)
+
+        inpainted_image_by_bilateral_filter = segmenter.custom_adaptive_bilateral_filter(original_image, combined_hair_mask)
+
+        inpainted_image_by_bilateral_sech_filter = segmenter.custom_adaptive_bilateral_sech_filter(original_image, combined_hair_mask)
+
+        inpainted_image_by_bilateral_le_versiera_filter = segmenter.custom_adaptive_bilateral_la_versiera_filter(original_image, combined_hair_mask)
+
+        inpainted_image_by_bilateral_sinc_filter = segmenter.custom_adaptive_bilateral_sinc_filter(original_image, combined_hair_mask)
+
+        inpainted_image_by_bilateral_sinc_square_filter = segmenter.custom_adaptive_bilateral_sinc_square_filter(original_image, combined_hair_mask)
+
+        inpainted_image_by_bilateral_gauss_hermite_m2_filter = segmenter.custom_adaptive_bilateral_gauss_hermite_m2_filter(original_image, combined_hair_mask)
+
+        inpainted_image_by_bilateral_gauss_hermite_m4_filter = segmenter.custom_adaptive_bilateral_gauss_hermite_m4_filter(original_image, combined_hair_mask)
+
+        inpainted_image_by_bilateral_gauss_hermite_m6_filter = segmenter.custom_adaptive_bilateral_gauss_hermite_m6_filter(original_image, combined_hair_mask)
+
+        inpainted_image_by_bilateral_dirichlet_filter = segmenter.custom_adaptive_bilateral_dirichlet_filter(original_image, combined_hair_mask)
+
+        inpainted_image_by_bilateral_ramanujan_sine_filter = segmenter.custom_adaptive_bilateral_ramanujan_sine_filter(original_image, combined_hair_mask)
+
+        inpainted_image_by_bilateral_ramanujan_cosine_filter = segmenter.custom_adaptive_bilateral_ramanujan_cosine_filter(original_image, combined_hair_mask)
+
+
+
+
+        final_preprocessed = segmenter.apply_gaussian_blur(inpainted_image)
+
+        final_preprocessed_after_inpainted_by_bilateral_filter = segmenter.apply_gaussian_blur(inpainted_image_by_bilateral_filter)
+
+        fig3, axes3 = plt.subplots(4, 3, figsize=(18, 16))
+        fig3.suptitle('Comparison of Different Bilateral Filter Inpainting Techniques', fontsize=16, fontweight='bold')
+
+        axes3[0,0].imshow(original_image)
+        axes3[0,0].set_title('Original Image', fontweight='bold', fontsize=10)
+        axes3[0,0].axis('off')
+
+        axes3[0,1].imshow(inpainted_image)
+        axes3[0,1].set_title('Telea Inpainting\nMethod: cv2.INPAINT_TELEA\nRadius: 1', fontweight='bold', fontsize=10)
+        axes3[0,1].axis('off')
+
+        axes3[0,2].imshow(inpainted_image_by_bilateral_filter)
+        axes3[0,2].set_title('Custom Bilateral Filter\nσ_d: 25,  Window: 7x7', fontweight='bold', fontsize=10)
+        axes3[0,2].axis('off')
+
+        axes3[1,0].imshow(inpainted_image_by_bilateral_sech_filter)
+        axes3[1,0].set_title('Bilateral Sech Filter\nσ_d: 25, a: 0.5, Window: 7x7', fontweight='bold', fontsize=10)
+        axes3[1,0].axis('off')
+
+        axes3[1,1].imshow(inpainted_image_by_bilateral_le_versiera_filter)
+        axes3[1,1].set_title('Bilateral La Versiera Filter\nσ_d: 25, σ_r: 20, a: 0.5, Window: 7x7', fontweight='bold', fontsize=10)
+        axes3[1,1].axis('off')
+
+        axes3[1,2].imshow(inpainted_image_by_bilateral_sinc_filter)
+        axes3[1,2].set_title('Bilateral Sinc Filter\nσ_d: 25, a: 0.5, Window: 7x7', fontweight='bold', fontsize=10)
+        axes3[1,2].axis('off')
+
+        axes3[2,0].imshow(inpainted_image_by_bilateral_sinc_square_filter)
+        axes3[2,0].set_title('Bilateral Sinc Square Filter\nσ_d: 25, a: 0.5, Window: 7x7', fontweight='bold', fontsize=10)
+        axes3[2,0].axis('off')
+
+        axes3[2,1].imshow(inpainted_image_by_bilateral_gauss_hermite_m2_filter)
+        axes3[2,1].set_title('Bilateral Gauss-Hermite m=2, σ_d: 25, Window: 7x7', fontweight='bold', fontsize=10)
+        axes3[2,1].axis('off')
+
+        axes3[2,2].imshow(inpainted_image_by_bilateral_gauss_hermite_m4_filter)
+        axes3[2,2].set_title('Bilateral Gauss-Hermite m=4, σ_d: 25, Window: 7x7', fontweight='bold', fontsize=10)
+        axes3[2,2].axis('off')
+
+        axes3[3,0].imshow(inpainted_image_by_bilateral_gauss_hermite_m6_filter)
+        axes3[3,0].set_title('Bilateral Gauss-Hermite m=6, σ_d: 25, Window: 7x7', fontweight='bold', fontsize=10)
+        axes3[3,0].axis('off')
+
+        axes3[3,1].imshow(inpainted_image_by_bilateral_dirichlet_filter)
+        axes3[3,1].set_title('Bilateral Dirichlet Filter\nσ_d: 25, κ: 2, Window: 7x7', fontweight='bold', fontsize=10)
+        axes3[3,1].axis('off')
+
+        axes3[3,2].imshow(inpainted_image_by_bilateral_ramanujan_sine_filter)
+        axes3[3,2].set_title('Bilateral Ramanujan Sine\nσ_d: 25, Window: 7x7', fontweight='bold', fontsize=10)
+        axes3[3,2].axis('off')
+
+        plt.tight_layout()
+
+        # Save the comparison figure in processing_outputs folder
+        comparison_path = "processing_outputs/twelve_inpainting_comparison.png"
+        os.makedirs(os.path.dirname(comparison_path), exist_ok=True)
+        plt.savefig(comparison_path, dpi=300, bbox_inches='tight')
+        plt.close()
+
+        print(f"✅ Twelve-way inpainting comparison saved to: {comparison_path}")
+        def generate_lesion_mask_from_transparent_background(image, threshold=10):
+            try:
+                if image.shape[2] == 4:
+                    alpha_channel = image[:, :, 3]
+                    return alpha_channel > threshold
+                elif len(image.shape) == 3:
+                    gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+                    return gray < (255 - threshold)
+                else:
+                    return image < (255 - threshold)
+            except Exception as e:
+                return np.ones(image.shape[:2], dtype=bool)
+        
+        lesion_mask = generate_lesion_mask_from_transparent_background(final_preprocessed, threshold=10)
+        
+        fig, axes = plt.subplots(1, 5, figsize=(15, 10))
+        fig.suptitle('Hair Removal Preprocessing Pipeline (Actual Implementation)', fontsize=16, fontweight='bold')
+        
+        axes[0].imshow(original_image)
+        axes[0].set_title('1. Original Image', fontweight='bold')
+        axes[0].axis('off')
+        
+        axes[1].imshow(grayscale_image, cmap='gray')
+        axes[1].set_title('2. Grayscale Conversion', fontweight='bold')
+        axes[1].axis('off')
+        
+        axes[2].imshow(blackhat_image, cmap='gray')
+        axes[2].set_title('3. Black Hair Detection(Blackhat)', fontweight='bold')
+        axes[2].axis('off')
+        
+        # # Step 4: tophat
+        # axes[1, 0].imshow(tophat_image, cmap='gray')
+        # axes[1, 0].set_title('4. White Hair Detection(Blackhat + Tophat)', fontweight='bold')
+        # axes[1, 0].axis('off')
+        # Step 5: Inpainted Image
+        axes[3].imshow(inpainted_image)
+        axes[3].set_title('4. Hair Removal (Inpainting)', fontweight='bold')
+        axes[3].axis('off')
+        
+        # Step 6: Gaussian Blurred (Final)
+        axes[4].imshow(final_preprocessed)
+        axes[4].set_title('5. Gaussian Smoothing\n(Final Preprocessed)', fontweight='bold')
+        axes[4].axis('off')
+        
+        plt.tight_layout()
+        
+        if output_path is None:
+            input_path = Path(image_path)
+            output_path = input_path.parent / f"{input_path.stem}_actual_preprocessing_steps.png"
+        
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        # Create before/after comparison
+        fig2, axes2 = plt.subplots(2, 3, figsize=(12, 10))
+        fig2.suptitle('Comparison Between Inpainting Techniques!', fontsize=16, fontweight='bold')
+        
+        axes2[0,0].imshow(original_image)
+        axes2[0,0].set_title('Before: Original Image', fontweight='bold')
+        axes2[0,0].axis('off')
+        
+        axes2[0,1].imshow(inpainted_image)
+        axes2[0,1].set_title('After: HR + TEL', fontweight='bold')
+        axes2[0,1].axis('off')
+
+        axes2[0,2].imshow(inpainted_image_by_bilateral_filter)
+        axes2[0,2].set_title('After: HR + BFI', fontweight='bold')
+        axes2[0,2].axis('off')
+
+
+        axes2[1,0].imshow(inpainted_image_by_bilateral_sech_filter)
+        axes2[1,0].set_title('After: HR + BFI-Sech', fontweight='bold')
+        axes2[1,0].axis('off')
+        
+        axes2[1,1].imshow(inpainted_image_by_bilateral_le_versiera_filter)
+        axes2[1,1].set_title('After: HR + BFI-Laversial', fontweight='bold')
+        axes2[1,1].axis('off')
+
+
+                # axes2[1,1].imshow(final_preprocessed)
+        # axes2[1,1].set_title('After: HR + BFI-Laversial + GS', fontweight='bold')
+        axes2[1,2].axis('off')
+
+
+        
+        plt.tight_layout()
+        
+        before_after_path = Path(output_path).parent / f"{Path(output_path).stem}_comparison_inpainting_tech.png"
+        plt.savefig(before_after_path, dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        print(f"✅ Actual preprocessing visualization saved to: {output_path}")
+        print(f"✅ Before/after comparison saved to: {before_after_path}")
+        
+        return True
+        
+    except Exception as e:
+        print(f"❌ Error during preprocessing visualization: {str(e)}")
+        return False
+
+
+def apply_blackhat_morphology_with_visualization(grayscale_image, show_plots=True):
+    import matplotlib.pyplot as plt
+    
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
+    
+    original = grayscale_image.copy()
+    
+    dilated = cv2.dilate(grayscale_image, kernel, iterations=1)
+
+    eroded = cv2.erode(grayscale_image, kernel, iterations=1)
+    
+    closed = cv2.erode(dilated, kernel, iterations=1)
+
+    openeing = cv2.dilate(eroded, kernel, iterations=1)
+    
+    blackhat = cv2.subtract(closed, original)
+
+    tophat = cv2.subtract(openeing, original)
+
+    combined_mask = cv2.add(blackhat, tophat)
+    # Fix: cv2.threshold returns (threshold_value, thresholded_image)
+    _, thresholded_black_hat_mask = cv2.threshold(blackhat, 10, 255, cv2.THRESH_BINARY)
+
+    # thresholded_top_hat_mask = cv2.threshold(tophat, 0, 255, cv2.THRESH_BINARY)
+
+    
+    if show_plots:
+        fig, axes = plt.subplots(3, 3, figsize=(12, 10))
+        fig.suptitle('Black Hat Morphology Steps', fontsize=16, fontweight='bold')
+        
+        axes[0, 0].imshow(original, cmap='gray')
+        axes[0, 0].set_title('1. Original Grayscale')
+        axes[0, 0].axis('off')
+        
+        axes[0, 1].imshow(dilated, cmap='gray')
+        axes[0, 1].set_title('2. After Dilation')
+        axes[0, 1].axis('off')
+        
+        axes[0, 2].imshow(closed, cmap='gray')
+        axes[0, 2].set_title('3. Dilation then Erosion (Closing)')
+        axes[0, 2].axis('off')
+        
+        axes[1, 0].imshow(blackhat, cmap='gray')
+        axes[1, 0].set_title('4. Black Hat (Closing - Original)')
+        axes[1, 0].axis('off')
+
+        axes[1, 1].imshow(openeing, cmap='gray')
+        axes[1, 1].set_title('5. Erosion Then Dilation (Opening)')
+        axes[1, 1].axis('off')
+               
+        axes[1, 2].imshow(tophat, cmap='gray')
+        axes[1, 2].set_title('6. Top Hat (Opening - Original)')
+        axes[1, 2].axis('off')
+
+        axes[2, 0].imshow(thresholded_black_hat_mask, cmap='gray')
+        axes[2, 0].set_title('7. Thresholded Combined Mask')
+        axes[2, 0].axis('off')
+        
+        # Hide unused subplots
+        axes[2, 1].axis('off')
+        axes[2, 2].axis('off')
+        
+        plt.tight_layout()
+        plt.savefig('blackhat_morphology_steps.png', dpi=300, bbox_inches='tight')
+        plt.show()
+    
+    return blackhat
+
+
 def main():
-    """Main entry point."""
-    # Set up logging
-    logger = setup_logging()
-
-    # Parse arguments
-    args = parse_args()
-
-    # Create necessary directories
-    os.makedirs('data/bcc', exist_ok=True)
-    os.makedirs('data/sk', exist_ok=True)
-    os.makedirs('model', exist_ok=True)
-    os.makedirs('output', exist_ok=True)
-    os.makedirs('output/images', exist_ok=True)
-    os.makedirs('output/metrics', exist_ok=True)
-    os.makedirs('output/features', exist_ok=True)
-    os.makedirs('output/summaries', exist_ok=True)  
-    os.makedirs('output/features', exist_ok=True)
-    os.makedirs('model/feature_based_fast', exist_ok=True)
-
-    logger.info(f"Running in {args.mode} mode")
+    print("Called Main visualize_preprocessing_steps...")
+    visualize_preprocessing_steps("data/bcc_segmented/ISIC_0026439_segmented.png", "processing_outputs/preprocessing_steps_output.png")
     
-    if args.mode == 'train':
-        logger.info(f"Training graph-based models with classifiers: '{args.classifiers}'")
-        # Display CNN configuration if applicable
-        if 'cnn' in args.classifiers.lower() or args.classifiers.lower() == 'all':
-            logger.info(f"CNN configuration: {args.cnn_model} architecture, " +
-                       f"{args.input_size}x{args.input_size} input size, " +
-                       f"{args.epochs} epochs, batch size {args.batch_size}")
-    elif args.mode == 'train_features':
-        logger.info(f"Training with conventional feature engineering approach")
-        logger.info(f"Feature set: {args.feature_set}, Feature selection: {args.feature_selection}")
-        logger.info(f"Classifiers: {args.feature_classifiers}")
-        if args.optimize:
-            logger.info("Hyperparameter optimization is enabled")
-
-        # Load custom parameters if provided
-    custom_params = None
-    if args.custom_params:
-        try:
-            with open(args.custom_params, 'r') as f:
-                custom_params = json.load(f)
-            logger.info(f"Loaded custom parameters from {args.custom_params}")
-        except Exception as e:
-            logger.warning(f"Failed to load custom parameters: {str(e)}")
-    
-    if args.train_from_features:
-        # Train models from saved features
-        if not args.features_file:
-            logger.error("--features-file required when using --train-from-features")
-            return
-        
-        logger.info(f"Training models from saved features: {args.features_file}")
-        train_models_from_features(args.features_file, args, logger, custom_params)
-        
-    else:
-        # Normal training (extract features and train models)
-        train_features(args, logger)        
 
 if __name__ == "__main__":
     main()

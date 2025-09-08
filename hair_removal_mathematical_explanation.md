@@ -158,14 +158,12 @@ For each pixel in dilated image, find minimum value in rectangular SE neighborho
 
 **Erosion at position (2,2):**
 ```
-Dilated region = [153  148  143]
-                 [158  153  148]
-                 [163  163  158]  ← center
-                 [163  158  153]
-                 [163  158  153]
+Dilated region = [153 148 143]
+                 [158 163 158]
+                 [168 163 163] ← center at dilated (2,2) = 163
 
-Erosion(2,2) = min{153, 148, 143, 158, 153, 148, 163, 163, 158, 163, 158, 153, 163, 158, 153}
-             = min{153, 148, 143, 158, 153, 148, 163, 163, 158, 163, 158, 153, 163, 158, 153}
+Erosion(2,2) = min{153, 148, 143, 158, 163, 158, 168, 163, 163}
+             = min{153, 148, 143, 158, 163, 158, 168, 163, 163}
              = 143
 ```
 
@@ -297,7 +295,7 @@ Neighbors of (2,2): [175, 170, 180, 175, 185, 175, 190, 185, 180]
                     (8-connected neighbors within radius 3)
 ```
 
-**Step 5b: Calculate Weights based on Distance:**
+**Step 5b: Calculate Weights Based on Distance:**
 ```
 For Telea algorithm:
 w(p,q) = 1/distance(p,q) for known pixels q near masked pixel p
@@ -365,16 +363,3 @@ def hair_artifact_removal(img):
 **Stage 5:** I_final = Telea_Inpaint(I₀, M, radius=3) (Hair removal)
 
 **Output:** I_final ∈ ℝ^(H×W×3) (Hair-free dermoscopic image)
-
----
-
-## Performance Validation
-
-This rectangular kernel hair removal algorithm achieves:
-- **Effective artifact removal** on 2,109 dermoscopic images
-- **91% AUC performance** in BCC vs SK classification
-- **Robust detection** of linear hair structures in all orientations
-- **Seamless inpainting** preserving lesion characteristics
-- **Consistent preprocessing** for reliable feature extraction
-
-The rectangular morphological approach provides comprehensive hair detection while maintaining computational efficiency and clinical accuracy.

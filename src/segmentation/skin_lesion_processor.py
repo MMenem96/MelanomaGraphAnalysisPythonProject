@@ -9,6 +9,7 @@ This ensures consistency between the input used for segmentation and the final o
 """
 
 import os
+import time
 import numpy as np
 import pickle
 import warnings
@@ -158,21 +159,906 @@ class SkinLesionProcessor:
         
         # Combine both masks
         combined_mask = cv2.add(blackhat_image, tophat_image)
-        
+
         return combined_mask, blackhat_image, tophat_image
 
+
     def apply_inpainting(self, original_image, hair_mask):
-        """Apply inpainting using combined hair mask"""
+        start_time = time.time()
+
         ret, thresh2 = cv2.threshold(hair_mask, 10, 255, cv2.THRESH_BINARY)
-        return cv2.inpaint(original_image, thresh2, 1, cv2.INPAINT_TELEA)
+
+        inpainted_image = cv2.inpaint(original_image, thresh2, 1, cv2.INPAINT_TELEA)
+
+        execution_time = time.time() - start_time
+
+        print(f"Inpainting executed in {execution_time:.2f} seconds")
+
+        return inpainted_image
+
+
+    def custom_adaptive_bilateral_filter(self, original_image, hair_mask, sigma_d=25, adaptive_sigma_r=True, sigma_r_base=25, window_size=7):
+        start_time = time.time()
+
+        ret, thresh2 = cv2.threshold(hair_mask, 10, 1, cv2.THRESH_BINARY)        
+        
+        image = original_image.astype(np.float32)
+        result = image.copy()
+        
+        pad = window_size // 2
+        padded_img = cv2.copyMakeBorder(image, pad, pad, pad, pad, cv2.BORDER_REFLECT)# Try to put the borders of padding with value 0
+        padded_mask = cv2.copyMakeBorder(thresh2, pad, pad, pad, pad, cv2.BORDER_CONSTANT, value=0)
+
+        H, W = image.shape[:2]
+
+        for i in range(H):
+            for j in range(W):
+                if thresh2[i, j] == 1:  # Only inpaint masked pixels
+                 
+                    # Extract neighborhood
+                    i0, j0 = i + pad, j + pad
+                    neigh = padded_img[i0-pad:i0+pad+1, j0-pad:j0+pad+1]
+                    neigh_mask = padded_mask[i0-pad:i0+pad+1, j0-pad:j0+pad+1]
+
+                    # Consider only valid neighbors
+                    valid_pixels = neigh[neigh_mask == 0]
+                    if valid_pixels.size == 0:
+                        continue
+
+                    # Compute spatial distances
+                    yy, xx = np.mgrid[-pad:pad+1, -pad:pad+1]
+                    spatial_weights = np.exp(-(xx**2 + yy**2) / (2 * sigma_d**2))
+
+                    # Compute range (intensity/color) differences
+                    center_val = padded_img[i0, j0]
+                    if image.ndim == 2:  # Grayscale
+                        diff = neigh - center_val
+                        diff_sq = diff**2
+
+                        # ADAPTIVE SIGMA_R CALCULATION
+                        if adaptive_sigma_r:
+                            # Calculate local standard deviation from valid neighbors only
+                            valid_neigh = neigh[neigh_mask == 0]
+                            if len(valid_neigh) > 1:
+                                sigma_r = np.std(valid_neigh) * 2.0  # Scale factor
+                                sigma_r = max(sigma_r, 5.0)  # Minimum threshold
+                            else:
+                                sigma_r = sigma_r_base
+                        else:
+                            sigma_r = sigma_r_base
+
+
+                    else:  # Color image
+                        diff = neigh - center_val.reshape(1, 1, -1)
+                        diff_sq = np.sum(diff**2, axis=2)
+                        # ADAPTIVE SIGMA_R CALCULATION for color
+                        if adaptive_sigma_r:
+                            valid_neigh = neigh[neigh_mask == 0]
+                            if len(valid_neigh) > 1:
+                                # Calculate standard deviation across all color channels
+                                sigma_r = np.std(valid_neigh) * 1.5  # Scale factor
+                                sigma_r = max(sigma_r, 10.0)  # Minimum threshold
+                            else:
+                                sigma_r = sigma_r_base
+                        else:
+                            sigma_r = sigma_r_base
+ 
+               
+                    range_weights = np.exp(-diff_sq / (2 * sigma_r**2))
+
+                    # Combine weights, exclude masked neighbors
+                    weights = spatial_weights * range_weights
+                    weights[neigh_mask == 1] = 0  # ignore masked pixels
+
+                    # Normalize
+                    norm = np.sum(weights)
+                    if norm > 1e-8:
+                        if image.ndim == 2:
+                            result[i, j] = np.sum(weights * neigh) / norm
+                        else:
+                            result[i, j] = np.sum(weights[..., None] * neigh, axis=(0, 1)) / norm
+
+        execution_time = time.time() - start_time
+        print(f"Custom bilateral filter executed in {execution_time:.2f} seconds")
+       
+        return result.astype(original_image.dtype)
+
+
+
+    def custom_adaptive_bilateral_sech_filter(self, original_image, hair_mask, sigma_d=25, adaptive_sigma_r=True, sigma_r_base=25, a=0.5, window_size=7):
+
+            def sech(x):
+                return 2.0 / (np.exp(x) + np.exp(-x))
+
+            start_time = time.time()
+
+            # Ensure mask is binary 0/1
+            _, thresh2 = cv2.threshold(hair_mask, 10, 1, cv2.THRESH_BINARY)
+
+            # Convert image to float for calculations
+            image = original_image.astype(np.float32)
+            result = image.copy()
+
+            pad = window_size // 2
+            padded_img = cv2.copyMakeBorder(image, pad, pad, pad, pad, cv2.BORDER_REFLECT)
+            padded_mask = cv2.copyMakeBorder(thresh2, pad, pad, pad, pad, cv2.BORDER_CONSTANT, value=0)
+
+            H, W = image.shape[:2]
+
+            for i in range(H):
+                for j in range(W):
+                    if thresh2[i, j] == 1:  # Only process masked pixels
+
+                        # Local neighborhood
+                        i0, j0 = i + pad, j + pad
+                        neigh = padded_img[i0-pad:i0+pad+1, j0-pad:j0+pad+1]
+                        neigh_mask = padded_mask[i0-pad:i0+pad+1, j0-pad:j0+pad+1]
+
+                        # Skip if no valid neighbors
+                        valid_pixels = neigh[neigh_mask == 0]
+                        if valid_pixels.size == 0:
+                            continue
+
+                        # Spatial distances
+                        yy, xx = np.mgrid[-pad:pad+1, -pad:pad+1]
+                        dist = np.sqrt(xx**2 + yy**2)
+                        spatial_weights = (np.pi / a) * sech((np.pi * dist) / (2 * a * sigma_d))
+
+                        # ADAPTIVE SIGMA_R CALCULATION
+                        if adaptive_sigma_r:
+                            if image.ndim == 2:  # Grayscale
+                                valid_neigh = neigh[neigh_mask == 0]
+                                if len(valid_neigh) > 1:
+                                    sigma_r = np.std(valid_neigh) * 2.0  # Scale factor
+                                    sigma_r = max(sigma_r, 5.0)  # Minimum threshold
+                                else:
+                                    sigma_r = sigma_r_base
+                            else:  # Color image
+                                valid_neigh = neigh[neigh_mask == 0]
+                                if len(valid_neigh) > 1:
+                                    # Calculate standard deviation across all color channels
+                                    sigma_r = np.std(valid_neigh) * 1.5  # Scale factor
+                                    sigma_r = max(sigma_r, 10.0)  # Minimum threshold
+                                else:
+                                    sigma_r = sigma_r_base
+                        else:
+                            sigma_r = sigma_r_base
+
+                        print("Sigma_R_Sech: " + str(sigma_r))
+
+                        # Range (intensity/color) differences
+                        center_val = padded_img[i0, j0]
+                        if image.ndim == 2:  # Grayscale
+                            diff = np.abs(neigh - center_val)
+                        else:  # Color image
+                            diff = np.sqrt(np.sum((neigh - center_val.reshape(1, 1, -1))**2, axis=2))
+
+                        range_weights = (np.pi / a) * sech((np.pi * diff) / (2 * a * sigma_r))
+
+                        # Combined kernel, ignore masked neighbors
+                        weights = spatial_weights * range_weights
+                        weights[neigh_mask == 1] = 0
+
+                        # Normalize and apply
+                        norm = np.sum(weights)
+                        if norm > 1e-8:
+                            if image.ndim == 2:  # Grayscale
+                                result[i, j] = np.sum(weights * neigh) / norm
+                            else:  # Color image
+                                result[i, j] = np.sum(weights[..., None] * neigh, axis=(0, 1)) / norm
+
+            execution_time = time.time() - start_time
+            print(f"Custom sech bilateral filter executed in {execution_time:.2f} seconds")
+
+            return result.astype(original_image.dtype)
+
+
+
+    def custom_adaptive_bilateral_la_versiera_filter(self, original_image, hair_mask, sigma_d=25, adaptive_sigma_r=True, sigma_r_base=20, a= 0.5, window_size=7):
+
+            def la_versiera(t, a):
+                return (2.0 * a) / (a**2 + t**2)
+
+            start_time = time.time()
+
+            # Ensure mask is binary 0/1
+            _, thresh2 = cv2.threshold(hair_mask, 10, 1, cv2.THRESH_BINARY)
+
+            # Convert image to float for calculations
+            image = original_image.astype(np.float32)
+            result = image.copy()
+
+            pad = window_size // 2
+            padded_img = cv2.copyMakeBorder(image, pad, pad, pad, pad, cv2.BORDER_REFLECT)
+            padded_mask = cv2.copyMakeBorder(thresh2, pad, pad, pad, pad, cv2.BORDER_CONSTANT, value=0)
+
+            H, W = image.shape[:2]
+
+            for i in range(H):
+                for j in range(W):
+                    if thresh2[i, j] == 1:  # Only process masked pixels
+
+                        # Local neighborhood
+                        i0, j0 = i + pad, j + pad
+                        neigh = padded_img[i0-pad:i0+pad+1, j0-pad:j0+pad+1]
+                        neigh_mask = padded_mask[i0-pad:i0+pad+1, j0-pad:j0+pad+1]
+
+                        # Skip if no valid neighbors
+                        valid_pixels = neigh[neigh_mask == 0]
+                        if valid_pixels.size == 0:
+                            continue
+
+                        # Spatial distances
+                        yy, xx = np.mgrid[-pad:pad+1, -pad:pad+1]
+                        dist = np.sqrt(xx**2 + yy**2)
+                        spatial_weights = la_versiera(dist / sigma_d, a)
+
+
+                        # ADAPTIVE SIGMA_R CALCULATION (same as other filters)
+                        if adaptive_sigma_r:
+                            if image.ndim == 2:  # Grayscale
+                                valid_neigh = neigh[neigh_mask == 0]
+                                if len(valid_neigh) > 1:
+                                    sigma_r = np.std(valid_neigh) * 2.0  # Scale factor
+                                    sigma_r = max(sigma_r, 5.0)  # Minimum threshold
+                                else:
+                                    sigma_r = sigma_r_base
+                            else:  # Color image
+                                valid_neigh = neigh[neigh_mask == 0]
+                                if len(valid_neigh) > 1:
+                                    sigma_r = np.std(valid_neigh) * 1.5  # Scale factor
+                                    sigma_r = max(sigma_r, 10.0)  # Minimum threshold
+                                else:
+                                    sigma_r = sigma_r_base
+                        else:
+                            sigma_r = sigma_r_base
+
+                        # Range (intensity/color) differences
+                        center_val = padded_img[i0, j0]
+                        if image.ndim == 2:  # Grayscale
+                            diff = np.abs(neigh - center_val)
+                        else:  # Color image
+                            diff = np.sqrt(np.sum((neigh - center_val.reshape(1, 1, -1))**2, axis=2))
+
+                        range_weights = la_versiera(diff / sigma_r, a)
+
+                        # Combined kernel, ignore masked neighbors
+                        weights = spatial_weights * range_weights
+                        weights[neigh_mask == 1] = 0
+
+                        # Normalize and apply
+                        norm = np.sum(weights)
+                        if norm > 1e-8:
+                            if image.ndim == 2:  # Grayscale
+                                result[i, j] = np.sum(weights * neigh) / norm
+                            else:  # Color image
+                                result[i, j] = np.sum(weights[..., None] * neigh, axis=(0, 1)) / norm
+
+            execution_time = time.time() - start_time
+            print(f"Custom La Versiera bilateral filter executed in {execution_time:.2f} seconds")
+
+            return result.astype(original_image.dtype)
+
+
+
+    def custom_adaptive_bilateral_sinc_filter(self, original_image, hair_mask, sigma_d=25, adaptive_sigma_r=True, sigma_r_base=25, a=0.5, window_size=7):
+        
+            def sinc_kernel(t, a):
+                return np.where(np.abs(t) < 1e-8, 2*a, (2 * np.sin(a * t)) / t)
+
+            start_time = time.time()
+            
+            _, thresh2 = cv2.threshold(hair_mask, 10, 1, cv2.THRESH_BINARY)
+            
+            image = original_image.astype(np.float32)
+            result = image.copy()
+            
+            pad = window_size // 2
+            padded_img = cv2.copyMakeBorder(image, pad, pad, pad, pad, cv2.BORDER_REFLECT)
+            padded_mask = cv2.copyMakeBorder(thresh2, pad, pad, pad, pad, cv2.BORDER_CONSTANT, value=0)
+
+            H, W = image.shape[:2]
+
+            for i in range(H):
+                for j in range(W):
+                    if thresh2[i, j] == 1:
+                        
+                        i0, j0 = i + pad, j + pad
+                        neigh = padded_img[i0-pad:i0+pad+1, j0-pad:j0+pad+1]
+                        neigh_mask = padded_mask[i0-pad:i0+pad+1, j0-pad:j0+pad+1]
+
+                        valid_pixels = neigh[neigh_mask == 0]
+                        if valid_pixels.size == 0:
+                            continue
+
+                        yy, xx = np.mgrid[-pad:pad+1, -pad:pad+1]
+                        dist = np.sqrt(xx**2 + yy**2)
+                        spatial_weights = sinc_kernel(dist / sigma_d, a)
+
+                        if adaptive_sigma_r:
+                            if image.ndim == 2:
+                                valid_neigh = neigh[neigh_mask == 0]
+                                if len(valid_neigh) > 1:
+                                    sigma_r = np.std(valid_neigh) * 2.0
+                                    sigma_r = max(sigma_r, 5.0)
+                                else:
+                                    sigma_r = sigma_r_base
+                            else:
+                                valid_neigh = neigh[neigh_mask == 0]
+                                if len(valid_neigh) > 1:
+                                    sigma_r = np.std(valid_neigh) * 1.5
+                                    sigma_r = max(sigma_r, 10.0)
+                                else:
+                                    sigma_r = sigma_r_base
+                        else:
+                            sigma_r = sigma_r_base
+
+                        center_val = padded_img[i0, j0]
+                        if image.ndim == 2:
+                            diff = np.abs(neigh - center_val)
+                        else:
+                            diff = np.sqrt(np.sum((neigh - center_val.reshape(1, 1, -1))**2, axis=2))
+
+                        range_weights = sinc_kernel(diff / sigma_r, a)
+
+                        weights = spatial_weights * range_weights
+                        weights[neigh_mask == 1] = 0
+
+                        norm = np.sum(weights)
+                        if norm > 1e-8:
+                            if image.ndim == 2:
+                                result[i, j] = np.sum(weights * neigh) / norm
+                            else:
+                                result[i, j] = np.sum(weights[..., None] * neigh, axis=(0, 1)) / norm
+
+            execution_time = time.time() - start_time
+            print(f"Custom sinc bilateral filter executed in {execution_time:.2f} seconds")
+            
+            return result.astype(original_image.dtype)
+
+
+    def custom_adaptive_bilateral_sinc_square_filter(self, original_image, hair_mask, sigma_d=25, adaptive_sigma_r=True, sigma_r_base=25, a=0.5, window_size=7):
+        
+        def sinc_square_kernel(t, a):
+            t_half = t / 2
+            return np.where(np.abs(t) < 1e-8, a, (np.sin(a * t_half)**2) / (a * t_half**2))
+
+        start_time = time.time()
+        
+        _, thresh2 = cv2.threshold(hair_mask, 10, 1, cv2.THRESH_BINARY)
+        
+        image = original_image.astype(np.float32)
+        result = image.copy()
+        
+        pad = window_size // 2
+        padded_img = cv2.copyMakeBorder(image, pad, pad, pad, pad, cv2.BORDER_REFLECT)
+        padded_mask = cv2.copyMakeBorder(thresh2, pad, pad, pad, pad, cv2.BORDER_CONSTANT, value=0)
+
+        H, W = image.shape[:2]
+
+        for i in range(H):
+            for j in range(W):
+                if thresh2[i, j] == 1:
+                    
+                    i0, j0 = i + pad, j + pad
+                    neigh = padded_img[i0-pad:i0+pad+1, j0-pad:j0+pad+1]
+                    neigh_mask = padded_mask[i0-pad:i0+pad+1, j0-pad:j0+pad+1]
+
+                    valid_pixels = neigh[neigh_mask == 0]
+                    if valid_pixels.size == 0:
+                        continue
+
+                    yy, xx = np.mgrid[-pad:pad+1, -pad:pad+1]
+                    dist = np.sqrt(xx**2 + yy**2)
+                    spatial_weights = sinc_square_kernel(dist / sigma_d, a)
+
+                    if adaptive_sigma_r:
+                        if image.ndim == 2:
+                            valid_neigh = neigh[neigh_mask == 0]
+                            if len(valid_neigh) > 1:
+                                sigma_r = np.std(valid_neigh) * 2.0
+                                sigma_r = max(sigma_r, 5.0)
+                            else:
+                                sigma_r = sigma_r_base
+                        else:
+                            valid_neigh = neigh[neigh_mask == 0]
+                            if len(valid_neigh) > 1:
+                                sigma_r = np.std(valid_neigh) * 1.5
+                                sigma_r = max(sigma_r, 10.0)
+                            else:
+                                sigma_r = sigma_r_base
+                    else:
+                        sigma_r = sigma_r_base
+
+                    center_val = padded_img[i0, j0]
+                    if image.ndim == 2:
+                        diff = np.abs(neigh - center_val)
+                    else:
+                        diff = np.sqrt(np.sum((neigh - center_val.reshape(1, 1, -1))**2, axis=2))
+
+                    range_weights = sinc_square_kernel(diff / sigma_r, a)
+
+                    weights = spatial_weights * range_weights
+                    weights[neigh_mask == 1] = 0
+
+                    norm = np.sum(weights)
+                    if norm > 1e-8:
+                        if image.ndim == 2:
+                            result[i, j] = np.sum(weights * neigh) / norm
+                        else:
+                            result[i, j] = np.sum(weights[..., None] * neigh, axis=(0, 1)) / norm
+
+        execution_time = time.time() - start_time
+        print(f"Custom sinc-square bilateral filter executed in {execution_time:.2f} seconds")
+        
+        return result.astype(original_image.dtype)
+
+
+    def custom_adaptive_bilateral_gauss_hermite_m2_filter(self, original_image, hair_mask, sigma_d=25, adaptive_sigma_r=True, sigma_r_base=25, window_size=7):
+        
+        def gauss_hermite_m2_kernel(t):
+            return (-2 + 4*t**2) * np.exp(-t**2/2)
+
+        start_time = time.time()
+        
+        _, thresh2 = cv2.threshold(hair_mask, 10, 1, cv2.THRESH_BINARY)
+        
+        image = original_image.astype(np.float32)
+        result = image.copy()
+        
+        pad = window_size // 2
+        padded_img = cv2.copyMakeBorder(image, pad, pad, pad, pad, cv2.BORDER_REFLECT)
+        padded_mask = cv2.copyMakeBorder(thresh2, pad, pad, pad, pad, cv2.BORDER_CONSTANT, value=0)
+
+        H, W = image.shape[:2]
+
+        for i in range(H):
+            for j in range(W):
+                if thresh2[i, j] == 1:
+                    
+                    i0, j0 = i + pad, j + pad
+                    neigh = padded_img[i0-pad:i0+pad+1, j0-pad:j0+pad+1]
+                    neigh_mask = padded_mask[i0-pad:i0+pad+1, j0-pad:j0+pad+1]
+
+                    valid_pixels = neigh[neigh_mask == 0]
+                    if valid_pixels.size == 0:
+                        continue
+
+                    yy, xx = np.mgrid[-pad:pad+1, -pad:pad+1]
+                    dist = np.sqrt(xx**2 + yy**2)
+                    spatial_weights = gauss_hermite_m2_kernel(dist / sigma_d)
+
+                    if adaptive_sigma_r:
+                        if image.ndim == 2:
+                            valid_neigh = neigh[neigh_mask == 0]
+                            if len(valid_neigh) > 1:
+                                sigma_r = np.std(valid_neigh) * 2.0
+                                sigma_r = max(sigma_r, 5.0)
+                            else:
+                                sigma_r = sigma_r_base
+                        else:
+                            valid_neigh = neigh[neigh_mask == 0]
+                            if len(valid_neigh) > 1:
+                                sigma_r = np.std(valid_neigh) * 1.5
+                                sigma_r = max(sigma_r, 10.0)
+                            else:
+                                sigma_r = sigma_r_base
+                    else:
+                        sigma_r = sigma_r_base
+
+                    center_val = padded_img[i0, j0]
+                    if image.ndim == 2:
+                        diff = np.abs(neigh - center_val)
+                    else:
+                        diff = np.sqrt(np.sum((neigh - center_val.reshape(1, 1, -1))**2, axis=2))
+
+                    range_weights = gauss_hermite_m2_kernel(diff / sigma_r)
+
+                    weights = spatial_weights * range_weights
+                    weights[neigh_mask == 1] = 0
+
+                    norm = np.sum(weights)
+                    if norm > 1e-8:
+                        if image.ndim == 2:
+                            result[i, j] = np.sum(weights * neigh) / norm
+                        else:
+                            result[i, j] = np.sum(weights[..., None] * neigh, axis=(0, 1)) / norm
+
+        execution_time = time.time() - start_time
+        print(f"Custom Gauss-Hermite m=2 bilateral filter executed in {execution_time:.2f} seconds")
+        
+        return result.astype(original_image.dtype)
+
+
+    def custom_adaptive_bilateral_dirichlet_filter(self, original_image, hair_mask, sigma_d=25, adaptive_sigma_r=True, sigma_r_base=25, kappa=2, window_size=7):
+        
+        def dirichlet_kernel(t, kappa):
+            numerator = np.sin((kappa + 0.5) * t)
+            denominator = 2 * np.sin(t / 2)
+            return np.where(np.abs(t) < 1e-8, kappa + 0.5, numerator / denominator)
+
+        start_time = time.time()
+        
+        _, thresh2 = cv2.threshold(hair_mask, 10, 1, cv2.THRESH_BINARY)
+        
+        image = original_image.astype(np.float32)
+        result = image.copy()
+        
+        pad = window_size // 2
+        padded_img = cv2.copyMakeBorder(image, pad, pad, pad, pad, cv2.BORDER_REFLECT)
+        padded_mask = cv2.copyMakeBorder(thresh2, pad, pad, pad, pad, cv2.BORDER_CONSTANT, value=0)
+
+        H, W = image.shape[:2]
+
+        for i in range(H):
+            for j in range(W):
+                if thresh2[i, j] == 1:
+                    
+                    i0, j0 = i + pad, j + pad
+                    neigh = padded_img[i0-pad:i0+pad+1, j0-pad:j0+pad+1]
+                    neigh_mask = padded_mask[i0-pad:i0+pad+1, j0-pad:j0+pad+1]
+
+                    valid_pixels = neigh[neigh_mask == 0]
+                    if valid_pixels.size == 0:
+                        continue
+
+                    yy, xx = np.mgrid[-pad:pad+1, -pad:pad+1]
+                    dist = np.sqrt(xx**2 + yy**2)
+                    spatial_weights = dirichlet_kernel(dist / sigma_d, kappa)
+
+                    if adaptive_sigma_r:
+                        if image.ndim == 2:
+                            valid_neigh = neigh[neigh_mask == 0]
+                            if len(valid_neigh) > 1:
+                                sigma_r = np.std(valid_neigh) * 2.0
+                                sigma_r = max(sigma_r, 5.0)
+                            else:
+                                sigma_r = sigma_r_base
+                        else:
+                            valid_neigh = neigh[neigh_mask == 0]
+                            if len(valid_neigh) > 1:
+                                sigma_r = np.std(valid_neigh) * 1.5
+                                sigma_r = max(sigma_r, 10.0)
+                            else:
+                                sigma_r = sigma_r_base
+                    else:
+                        sigma_r = sigma_r_base
+
+                    center_val = padded_img[i0, j0]
+                    if image.ndim == 2:
+                        diff = np.abs(neigh - center_val)
+                    else:
+                        diff = np.sqrt(np.sum((neigh - center_val.reshape(1, 1, -1))**2, axis=2))
+
+                    range_weights = dirichlet_kernel(diff / sigma_r, kappa)
+
+                    weights = spatial_weights * range_weights
+                    weights[neigh_mask == 1] = 0
+
+                    norm = np.sum(weights)
+                    if norm > 1e-8:
+                        if image.ndim == 2:
+                            result[i, j] = np.sum(weights * neigh) / norm
+                        else:
+                            result[i, j] = np.sum(weights[..., None] * neigh, axis=(0, 1)) / norm
+
+        execution_time = time.time() - start_time
+        print(f"Custom Dirichlet bilateral filter executed in {execution_time:.2f} seconds")
+        
+        return result.astype(original_image.dtype)
+
+
+    def custom_adaptive_bilateral_ramanujan_sine_filter(self, original_image, hair_mask, sigma_d=25, adaptive_sigma_r=True, sigma_r_base=25, window_size=7):
+        
+        def ramanujan_sine_kernel(t):
+            sech_term = 2.0 / (np.exp(t/2) + np.exp(-t/2))
+            return (1/np.sqrt(2) + np.sin(t**2/(4*np.pi))) * sech_term
+
+        start_time = time.time()
+        
+        _, thresh2 = cv2.threshold(hair_mask, 10, 1, cv2.THRESH_BINARY)
+        
+        image = original_image.astype(np.float32)
+        result = image.copy()
+        
+        pad = window_size // 2
+        padded_img = cv2.copyMakeBorder(image, pad, pad, pad, pad, cv2.BORDER_REFLECT)
+        padded_mask = cv2.copyMakeBorder(thresh2, pad, pad, pad, pad, cv2.BORDER_CONSTANT, value=0)
+
+        H, W = image.shape[:2]
+
+        for i in range(H):
+            for j in range(W):
+                if thresh2[i, j] == 1:
+                    
+                    i0, j0 = i + pad, j + pad
+                    neigh = padded_img[i0-pad:i0+pad+1, j0-pad:j0+pad+1]
+                    neigh_mask = padded_mask[i0-pad:i0+pad+1, j0-pad:j0+pad+1]
+
+                    valid_pixels = neigh[neigh_mask == 0]
+                    if valid_pixels.size == 0:
+                        continue
+
+                    yy, xx = np.mgrid[-pad:pad+1, -pad:pad+1]
+                    dist = np.sqrt(xx**2 + yy**2)
+                    spatial_weights = ramanujan_sine_kernel(dist / sigma_d)
+
+                    if adaptive_sigma_r:
+                        if image.ndim == 2:
+                            valid_neigh = neigh[neigh_mask == 0]
+                            if len(valid_neigh) > 1:
+                                sigma_r = np.std(valid_neigh) * 2.0
+                                sigma_r = max(sigma_r, 5.0)
+                            else:
+                                sigma_r = sigma_r_base
+                        else:
+                            valid_neigh = neigh[neigh_mask == 0]
+                            if len(valid_neigh) > 1:
+                                sigma_r = np.std(valid_neigh) * 1.5
+                                sigma_r = max(sigma_r, 10.0)
+                            else:
+                                sigma_r = sigma_r_base
+                    else:
+                        sigma_r = sigma_r_base
+
+                    center_val = padded_img[i0, j0]
+                    if image.ndim == 2:
+                        diff = np.abs(neigh - center_val)
+                    else:
+                        diff = np.sqrt(np.sum((neigh - center_val.reshape(1, 1, -1))**2, axis=2))
+
+                    range_weights = ramanujan_sine_kernel(diff / sigma_r)
+
+                    weights = spatial_weights * range_weights
+                    weights[neigh_mask == 1] = 0
+
+                    norm = np.sum(weights)
+                    if norm > 1e-8:
+                        if image.ndim == 2:
+                            result[i, j] = np.sum(weights * neigh) / norm
+                        else:
+                            result[i, j] = np.sum(weights[..., None] * neigh, axis=(0, 1)) / norm
+
+        execution_time = time.time() - start_time
+        print(f"Custom Ramanujan sine bilateral filter executed in {execution_time:.2f} seconds")
+        
+        return result.astype(original_image.dtype)
+
+
+    def custom_adaptive_bilateral_gauss_hermite_m4_filter(self, original_image, hair_mask, sigma_d=25, adaptive_sigma_r=True, sigma_r_base=25, window_size=7):
+        
+        def gauss_hermite_m4_kernel(t):
+            return (12 - 48*t**2 + 16*t**4) * np.exp(-t**2/2)
+
+        start_time = time.time()
+        
+        _, thresh2 = cv2.threshold(hair_mask, 10, 1, cv2.THRESH_BINARY)
+        
+        image = original_image.astype(np.float32)
+        result = image.copy()
+        
+        pad = window_size // 2
+        padded_img = cv2.copyMakeBorder(image, pad, pad, pad, pad, cv2.BORDER_REFLECT)
+        padded_mask = cv2.copyMakeBorder(thresh2, pad, pad, pad, pad, cv2.BORDER_CONSTANT, value=0)
+
+        H, W = image.shape[:2]
+
+        for i in range(H):
+            for j in range(W):
+                if thresh2[i, j] == 1:
+                    
+                    i0, j0 = i + pad, j + pad
+                    neigh = padded_img[i0-pad:i0+pad+1, j0-pad:j0+pad+1]
+                    neigh_mask = padded_mask[i0-pad:i0+pad+1, j0-pad:j0+pad+1]
+
+                    valid_pixels = neigh[neigh_mask == 0]
+                    if valid_pixels.size == 0:
+                        continue
+
+                    yy, xx = np.mgrid[-pad:pad+1, -pad:pad+1]
+                    dist = np.sqrt(xx**2 + yy**2)
+                    spatial_weights = gauss_hermite_m4_kernel(dist / sigma_d)
+
+                    if adaptive_sigma_r:
+                        if image.ndim == 2:
+                            valid_neigh = neigh[neigh_mask == 0]
+                            if len(valid_neigh) > 1:
+                                sigma_r = np.std(valid_neigh) * 2.0
+                                sigma_r = max(sigma_r, 5.0)
+                            else:
+                                sigma_r = sigma_r_base
+                        else:
+                            valid_neigh = neigh[neigh_mask == 0]
+                            if len(valid_neigh) > 1:
+                                sigma_r = np.std(valid_neigh) * 1.5
+                                sigma_r = max(sigma_r, 10.0)
+                            else:
+                                sigma_r = sigma_r_base
+                    else:
+                        sigma_r = sigma_r_base
+
+                    center_val = padded_img[i0, j0]
+                    if image.ndim == 2:
+                        diff = np.abs(neigh - center_val)
+                    else:
+                        diff = np.sqrt(np.sum((neigh - center_val.reshape(1, 1, -1))**2, axis=2))
+
+                    range_weights = gauss_hermite_m4_kernel(diff / sigma_r)
+
+                    weights = spatial_weights * range_weights
+                    weights[neigh_mask == 1] = 0
+
+                    norm = np.sum(weights)
+                    if norm > 1e-8:
+                        if image.ndim == 2:
+                            result[i, j] = np.sum(weights * neigh) / norm
+                        else:
+                            result[i, j] = np.sum(weights[..., None] * neigh, axis=(0, 1)) / norm
+
+        execution_time = time.time() - start_time
+        print(f"Custom Gauss-Hermite m=4 bilateral filter executed in {execution_time:.2f} seconds")
+        
+        return result.astype(original_image.dtype)
+
+
+    def custom_adaptive_bilateral_gauss_hermite_m6_filter(self, original_image, hair_mask, sigma_d=25, adaptive_sigma_r=True, sigma_r_base=25, window_size=7):
+        
+        def gauss_hermite_m6_kernel(t):
+            return (-120 + 720*t**2 - 480*t**4 + 64*t**6) * np.exp(-t**2/2)
+
+        start_time = time.time()
+        
+        _, thresh2 = cv2.threshold(hair_mask, 10, 1, cv2.THRESH_BINARY)
+        
+        image = original_image.astype(np.float32)
+        result = image.copy()
+        
+        pad = window_size // 2
+        padded_img = cv2.copyMakeBorder(image, pad, pad, pad, pad, cv2.BORDER_REFLECT)
+        padded_mask = cv2.copyMakeBorder(thresh2, pad, pad, pad, pad, cv2.BORDER_CONSTANT, value=0)
+
+        H, W = image.shape[:2]
+
+        for i in range(H):
+            for j in range(W):
+                if thresh2[i, j] == 1:
+                    
+                    i0, j0 = i + pad, j + pad
+                    neigh = padded_img[i0-pad:i0+pad+1, j0-pad:j0+pad+1]
+                    neigh_mask = padded_mask[i0-pad:i0+pad+1, j0-pad:j0+pad+1]
+
+                    valid_pixels = neigh[neigh_mask == 0]
+                    if valid_pixels.size == 0:
+                        continue
+
+                    yy, xx = np.mgrid[-pad:pad+1, -pad:pad+1]
+                    dist = np.sqrt(xx**2 + yy**2)
+                    spatial_weights = gauss_hermite_m6_kernel(dist / sigma_d)
+
+                    if adaptive_sigma_r:
+                        if image.ndim == 2:
+                            valid_neigh = neigh[neigh_mask == 0]
+                            if len(valid_neigh) > 1:
+                                sigma_r = np.std(valid_neigh) * 2.0
+                                sigma_r = max(sigma_r, 5.0)
+                            else:
+                                sigma_r = sigma_r_base
+                        else:
+                            valid_neigh = neigh[neigh_mask == 0]
+                            if len(valid_neigh) > 1:
+                                sigma_r = np.std(valid_neigh) * 1.5
+                                sigma_r = max(sigma_r, 10.0)
+                            else:
+                                sigma_r = sigma_r_base
+                    else:
+                        sigma_r = sigma_r_base
+
+                    center_val = padded_img[i0, j0]
+                    if image.ndim == 2:
+                        diff = np.abs(neigh - center_val)
+                    else:
+                        diff = np.sqrt(np.sum((neigh - center_val.reshape(1, 1, -1))**2, axis=2))
+
+                    range_weights = gauss_hermite_m6_kernel(diff / sigma_r)
+
+                    weights = spatial_weights * range_weights
+                    weights[neigh_mask == 1] = 0
+
+                    norm = np.sum(weights)
+                    if norm > 1e-8:
+                        if image.ndim == 2:
+                            result[i, j] = np.sum(weights * neigh) / norm
+                        else:
+                            result[i, j] = np.sum(weights[..., None] * neigh, axis=(0, 1)) / norm
+
+        execution_time = time.time() - start_time
+        print(f"Custom Gauss-Hermite m=6 bilateral filter executed in {execution_time:.2f} seconds")
+        
+        return result.astype(original_image.dtype)
+
+
+    def custom_adaptive_bilateral_ramanujan_cosine_filter(self, original_image, hair_mask, sigma_d=25, adaptive_sigma_r=True, sigma_r_base=25, window_size=7):
+        
+        def ramanujan_cosine_kernel(t):
+            sech_term = 2.0 / (np.exp(t/2) + np.exp(-t/2))
+            return (1/np.sqrt(2) - np.cos(t**2/(4*np.pi))) * sech_term
+
+        start_time = time.time()
+        
+        _, thresh2 = cv2.threshold(hair_mask, 10, 1, cv2.THRESH_BINARY)
+        
+        image = original_image.astype(np.float32)
+        result = image.copy()
+        
+        pad = window_size // 2
+        padded_img = cv2.copyMakeBorder(image, pad, pad, pad, pad, cv2.BORDER_REFLECT)
+        padded_mask = cv2.copyMakeBorder(thresh2, pad, pad, pad, pad, cv2.BORDER_CONSTANT, value=0)
+
+        H, W = image.shape[:2]
+
+        for i in range(H):
+            for j in range(W):
+                if thresh2[i, j] == 1:
+                    
+                    i0, j0 = i + pad, j + pad
+                    neigh = padded_img[i0-pad:i0+pad+1, j0-pad:j0+pad+1]
+                    neigh_mask = padded_mask[i0-pad:i0+pad+1, j0-pad:j0+pad+1]
+
+                    valid_pixels = neigh[neigh_mask == 0]
+                    if valid_pixels.size == 0:
+                        continue
+
+                    yy, xx = np.mgrid[-pad:pad+1, -pad:pad+1]
+                    dist = np.sqrt(xx**2 + yy**2)
+                    spatial_weights = ramanujan_cosine_kernel(dist / sigma_d)
+
+                    if adaptive_sigma_r:
+                        if image.ndim == 2:
+                            valid_neigh = neigh[neigh_mask == 0]
+                            if len(valid_neigh) > 1:
+                                sigma_r = np.std(valid_neigh) * 2.0
+                                sigma_r = max(sigma_r, 5.0)
+                            else:
+                                sigma_r = sigma_r_base
+                        else:
+                            valid_neigh = neigh[neigh_mask == 0]
+                            if len(valid_neigh) > 1:
+                                sigma_r = np.std(valid_neigh) * 1.5
+                                sigma_r = max(sigma_r, 10.0)
+                            else:
+                                sigma_r = sigma_r_base
+                    else:
+                        sigma_r = sigma_r_base
+
+                    center_val = padded_img[i0, j0]
+                    if image.ndim == 2:
+                        diff = np.abs(neigh - center_val)
+                    else:
+                        diff = np.sqrt(np.sum((neigh - center_val.reshape(1, 1, -1))**2, axis=2))
+
+                    range_weights = ramanujan_cosine_kernel(diff / sigma_r)
+
+                    weights = spatial_weights * range_weights
+                    weights[neigh_mask == 1] = 0
+
+                    norm = np.sum(weights)
+                    if norm > 1e-8:
+                        if image.ndim == 2:
+                            result[i, j] = np.sum(weights * neigh) / norm
+                        else:
+                            result[i, j] = np.sum(weights[..., None] * neigh, axis=(0, 1)) / norm
+
+        execution_time = time.time() - start_time
+        print(f"Custom Ramanujan cosine bilateral filter executed in {execution_time:.2f} seconds")
+        
+        return result.astype(original_image.dtype)
+
+
 
     def apply_gaussian_blur(self, image):
-        """Apply Gaussian blur"""
         return cv2.GaussianBlur(image, (3, 3), 0)
 
     def get_segmentation_mask(self, preprocessed_image):
-        """Get segmentation mask using U-Net model"""
-        # Prepare input for the model
         X_test = np.zeros((1, self.IMG_HEIGHT, self.IMG_WIDTH, self.IMG_CHANNELS), dtype=np.uint8)
         
         # Resize and normalize the preprocessed image
@@ -189,10 +1075,7 @@ class SkinLesionProcessor:
         return predicted
 
     def extract_features(self, input_dict, base_path):
-        """
-        Function to perform feature extraction for the segmented masks by calculating their 
-        Asymmetry, Border irregularity, Color variation, Diameter and Texture
-        """
+    
         features = {}
         for idx, image_name in enumerate(input_dict):
             path = base_path / image_name
@@ -201,7 +1084,7 @@ class SkinLesionProcessor:
             # Ensure image is in valid range and handle edge cases
             image = np.clip(image, 0, 255).astype(np.uint8)
             
-            # Use cv2 for grayscale conversion to avoid skimage warnings
+            # grayscale conversion to avoid skimage warnings
             if len(image.shape) == 3:
                 gray_img = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY) / 255.0  # Normalize to [0,1]
             else:
@@ -343,10 +1226,14 @@ class SkinLesionProcessor:
         
         # Step 4: Apply inpainting with combined mask
         inpainted_image = self.apply_inpainting(original_image, combined_hair_mask)
+
+        inpainted_image_by_bilateral_filter = self.custom_bilateral_filter(original_image, combined_hair_mask)
         
         # Step 5: Apply Gaussian blur
         gaussian_blurred_image = self.apply_gaussian_blur(inpainted_image)
         
+        gaussian_blurred_from_inpainted_image_by_bilateral_filter_image = self.apply_gaussian_blur(inpainted_image_by_bilateral_filter)
+
         # Step 6: Get segmentation mask
         predicted_mask = self.get_segmentation_mask(gaussian_blurred_image)
         
@@ -363,7 +1250,10 @@ class SkinLesionProcessor:
             io.imsave(self.output_dir / f"{base_name}_02_grayscale.jpg", grayscale_image)
             io.imsave(self.output_dir / f"{base_name}_03_blackhat.jpg", blackhat_image)
             io.imsave(self.output_dir / f"{base_name}_04_inpainted.jpg", inpainted_image)
+            io.imsave(self.output_dir / f"{base_name}_04_1_inpainted_with_bilateral_inpainting.jpg", inpainted_image_by_bilateral_filter)
             io.imsave(self.output_dir / f"{base_name}_05_gaussian.jpg", gaussian_blurred_image)
+            io.imsave(self.output_dir / f"{base_name}_05_1_gaussian_with_bilateral_inpainting.jpg", gaussian_blurred_from_inpainted_image_by_bilateral_filter_image)
+
             cv2.imwrite(str(self.output_dir / f"{base_name}_06_mask.jpg"), 
                     img_as_ubyte(predicted_mask.squeeze()))
             io.imsave(self.output_dir / f"{base_name}_07_segmented_area.jpg", 
@@ -385,6 +1275,9 @@ class SkinLesionProcessor:
             'mask_binary': mask_binary
         }
 
+
+
+
 # Example usage
 if __name__ == "__main__":
     # Initialize the processor once
@@ -392,7 +1285,7 @@ if __name__ == "__main__":
     
     # Process an image
     try:
-        image_path = "data/test/ISIC_0024306.jpg"  # Replace with your image path
+        image_path = "data/sk_segmented/ISIC_0024426_segmented.png" 
         
         results = processor.process_image(image_path, save_intermediate=True)
         
