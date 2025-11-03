@@ -2181,7 +2181,7 @@ def visualize_preprocessing_steps(image_path, output_path=None):
         axes[1].axis('off')
         
         axes[2].imshow(blackhat_image, cmap='gray')
-        axes[2].set_title('3. Black Hair Detection(Blackhat)', fontweight='bold')
+        axes[2].set_title('3. Black Hair Detection (Blackhat)', fontweight='bold')
         axes[2].axis('off')
         
         # # Step 4: tophat
@@ -2206,36 +2206,78 @@ def visualize_preprocessing_steps(image_path, output_path=None):
         
         plt.savefig(output_path, dpi=300, bbox_inches='tight')
         plt.close()
+
+           
+        #Create Image Preprocessing Steps
+
+        fig2, axes2 = plt.subplots(1, 5, figsize=(15, 10))
+        fig2.suptitle('Image Preprocessing Steps', fontsize=16, fontweight='bold')
+        
+        not_segmented_image = cv2.imread('data/sk/ISIC_0025803.jpg')
+        not_segmented_image = cv2.cvtColor(not_segmented_image, cv2.COLOR_BGR2RGB)
+        axes2[0].imshow(not_segmented_image, cmap='gray')
+        axes2[0].set_title('1. Original Image', fontweight='bold')
+        axes2[0].axis('off')
+        
+        axes2[1].imshow(original_image, cmap='gray')
+        axes2[1].set_title('2. Lesion Segmentation', fontweight='bold')
+        axes2[1].axis('off')
+        
+        augmented_image = cv2.flip(original_image, 1)
+        axes2[2].imshow(augmented_image, cmap='gray')
+        axes2[2].set_title('3. Augmented Image', fontweight='bold')
+        axes2[2].axis('off')
+
+
+        axes2[3].imshow(inpainted_image)
+        axes2[3].set_title('4. Artifact Removal', fontweight='bold')
+        axes2[3].axis('off')
+        
+        # Step 6: Gaussian Blurred (Final)
+        axes2[4].imshow(final_preprocessed)
+        axes2[4].set_title('5. Noise Removing', fontweight='bold')
+        axes2[4].axis('off')
+        
+        plt.tight_layout()
+        
+        if output_path is None:
+            input_path = Path(image_path)
+            output_path = input_path.parent / f"{input_path.stem}_image_preprocessing_steps.png"
+        
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        plt.close()
+
+
         
         # Create before/after comparison
-        fig2, axes2 = plt.subplots(2, 3, figsize=(12, 10))
-        fig2.suptitle('Comparison Between Inpainting Techniques!', fontsize=16, fontweight='bold')
+        fig3, axes3 = plt.subplots(2, 3, figsize=(12, 10))
+        fig3.suptitle('Comparison Between Inpainting Techniques!', fontsize=16, fontweight='bold')
         
-        axes2[0,0].imshow(original_image)
-        axes2[0,0].set_title('Before: Original Image', fontweight='bold')
-        axes2[0,0].axis('off')
+        axes3[0,0].imshow(original_image)
+        axes3[0,0].set_title('Before: Original Image', fontweight='bold')
+        axes3[0,0].axis('off')
         
-        axes2[0,1].imshow(inpainted_image)
-        axes2[0,1].set_title('After: HR + TEL', fontweight='bold')
-        axes2[0,1].axis('off')
+        axes3[0,1].imshow(inpainted_image)
+        axes3[0,1].set_title('After: HR + TEL', fontweight='bold')
+        axes3[0,1].axis('off')
 
-        axes2[0,2].imshow(inpainted_image_by_bilateral_filter)
-        axes2[0,2].set_title('After: HR + BFI', fontweight='bold')
-        axes2[0,2].axis('off')
+        axes3[0,2].imshow(inpainted_image_by_bilateral_filter)
+        axes3[0,2].set_title('After: HR + BFI', fontweight='bold')
+        axes3[0,2].axis('off')
 
 
-        axes2[1,0].imshow(inpainted_image_by_bilateral_sech_filter)
-        axes2[1,0].set_title('After: HR + BFI-Sech', fontweight='bold')
-        axes2[1,0].axis('off')
+        axes3[1,0].imshow(inpainted_image_by_bilateral_sech_filter)
+        axes3[1,0].set_title('After: HR + BFI-Sech', fontweight='bold')
+        axes3[1,0].axis('off')
         
-        axes2[1,1].imshow(inpainted_image_by_bilateral_le_versiera_filter)
-        axes2[1,1].set_title('After: HR + BFI-Laversial', fontweight='bold')
-        axes2[1,1].axis('off')
+        axes3[1,1].imshow(inpainted_image_by_bilateral_le_versiera_filter)
+        axes3[1,1].set_title('After: HR + BFI-Laversial', fontweight='bold')
+        axes3[1,1].axis('off')
 
 
                 # axes2[1,1].imshow(final_preprocessed)
         # axes2[1,1].set_title('After: HR + BFI-Laversial + GS', fontweight='bold')
-        axes2[1,2].axis('off')
+        axes3[1,2].axis('off')
 
 
         
@@ -2326,7 +2368,7 @@ def apply_blackhat_morphology_with_visualization(grayscale_image, show_plots=Tru
 
 def main():
     print("Called Main visualize_preprocessing_steps...")
-    visualize_preprocessing_steps("data/bcc_segmented/ISIC_0026439_segmented.png", "processing_outputs/preprocessing_steps_output.png")
+    visualize_preprocessing_steps("data/sk_segmented/ISIC_0025803_segmented.png", "processing_outputs/preprocessing_steps_output.png")
     
 
 if __name__ == "__main__":
