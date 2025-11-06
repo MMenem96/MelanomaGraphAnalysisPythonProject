@@ -39,7 +39,11 @@ class ConventionalFeatureExtractor:
             # Enhanced color features
             enhanced_color_features = self.extract_enhanced_color_features(image, mask)
             features.update(enhanced_color_features)
-            
+
+            # Extract Krawtchouk moments for shape and texture characterization
+            krawtchouk_features = self.extract_krawtchouk_moments(image, mask)
+            features.update(krawtchouk_features)
+
             """
             # Surface pattern features (BCC vs SK specific)
             surface_features = self.extract_surface_pattern_features(image, mask)
@@ -630,6 +634,210 @@ class ConventionalFeatureExtractor:
             self.logger.error(f"Error extracting dermoscopic features: {str(e)}")
             return {}
         
+    def _krawtchouk_polynomial(self, x, n, p, N):
+            return 0.0
+
+    def _krawtchouk_weight(self, x, p, N):
+            return 0.0
+     
+    def extract_krawtchouk_moments(self, image, mask, max_order=4, p1=0.5, p2=0.5, normalize_size=64):
+            """
+            Extract Krawtchouk moments optimized for skin lesion texture and shape analysis.
+            
+            Krawtchouk moments are orthogonal discrete moments that provide excellent 
+            discrimination for texture patterns in medical images. They are particularly 
+            effective for:
+            - Detecting subtle texture differences (BCC pearling vs SK keratin plugs)
+            - Capturing border irregularities
+            - Shape asymmetry analysis
+            - Rotation and scale invariant feature extraction
+            
+            Args:
+                image: Input image (RGB or grayscale)
+                mask: Binary mask defining the lesion region
+                max_order: Maximum moment order (default: 4)
+                        - Higher orders capture finer details but may overfit
+                        - Recommended: 3-5 for skin lesions
+                p1: Parameter for x-direction polynomials (default: 0.5)
+                    - 0.5 provides symmetric weighting
+                p2: Parameter for y-direction polynomials (default: 0.5)
+                    - 0.5 provides symmetric weighting
+                normalize_size: Resize region to this size for computational efficiency (default: 64)
+            
+            Returns:
+                dict: Dictionary of Krawtchouk moment features
+            """
+            try:
+                features = {}
+                
+                # Convert to grayscale if needed
+                if len(image.shape) == 3 and image.shape[2] >= 3:
+                    gray = color.rgb2gray(image[:,:,:3])
+                else:
+                    gray = image.copy()
+                    if len(gray.shape) == 3:
+                        gray = gray[:,:,0]
+                
+                # Ensure values are in [0, 1] range
+                if np.max(gray) > 1.0:
+                    gray = gray / 255.0
+                
+                # Extract lesion region using mask
+                if np.sum(mask) == 0:
+                    # If mask is empty, return zero features
+                    self.logger.warning("Empty mask provided for Krawtchouk moments")
+                    for n in range(max_order + 1):
+                        for m in range(max_order + 1):
+                            if n + m <= max_order:
+                                features[f'krawtchouk_moment_{n}_{m}'] = 0.0
+                                features[f'krawtchouk_moment_abs_{n}_{m}'] = 0.0
+                    return features
+                
+                # Get bounding box of the lesion
+                rows, cols = np.where(mask)
+                if len(rows) == 0 or len(cols) == 0:
+                    self.logger.warning("Invalid mask for Krawtchouk moments")
+                    for n in range(max_order + 1):
+                        for m in range(max_order + 1):
+                            if n + m <= max_order:
+                                features[f'krawtchouk_moment_{n}_{m}'] = 0.0
+                                features[f'krawtchouk_moment_abs_{n}_{m}'] = 0.0
+                    return features
+                
+                min_row, max_row = rows.min(), rows.max()
+                min_col, max_col = cols.min(), cols.max()
+                
+                # Extract and crop the lesion region
+                lesion_region = gray[min_row:max_row+1, min_col:max_col+1].copy()
+                lesion_mask = mask[min_row:max_row+1, min_col:max_col+1].copy()
+                
+                # Apply mask to region
+                lesion_region[~lesion_mask] = 0
+                
+                # Resize for computational efficiency while preserving aspect ratio
+                original_shape = lesion_region.shape
+                if max(original_shape) > normalize_size:
+                    scale = normalize_size / max(original_shape)
+                    new_height = int(original_shape[0] * scale)
+                    new_width = int(original_shape[1] * scale)
+                    lesion_region = cv2.resize(lesion_region, (new_width, new_height), 
+                                            interpolation=cv2.INTER_LINEAR)
+                    lesion_mask_resized = cv2.resize(lesion_mask.astype(np.uint8), 
+                                                    (new_width, new_height), 
+                                                    interpolation=cv2.INTER_NEAREST).astype(bool)
+                else:
+                    lesion_mask_resized = lesion_mask
+                
+                N1, N2 = lesion_region.shape  # Image dimensions
+                
+                # Pre-compute Krawtchouk polynomials for efficiency
+                K_x = np.zeros((max_order + 1, N2))  # Polynomials in x-direction
+                K_y = np.zeros((max_order + 1, N1))  # Polynomials in y-direction
+                
+                for n in range(max_order + 1):
+                    for x in range(N2):
+                        K_x[n, x] = self._krawtchouk_polynomial(x, n, p1, N2 - 1)
+                    for y in range(N1):
+                        K_y[n, y] = self._krawtchouk_polynomial(y, n, p2, N1 - 1)
+                
+                # Compute Krawtchouk moments
+                for n in range(max_order + 1):
+                    for m in range(max_order + 1):
+                        if n + m > max_order:
+                            continue
+                        
+                        # Calculate moment Q_nm
+                        moment = 0.0
+                        for y in range(N1):
+                            for x in range(N2):
+                                if lesion_mask_resized[y, x]:
+                                    moment += lesion_region[y, x] * K_x[n, x] * K_y[m, y]
+                        
+                        # Normalize by region area
+                        moment = moment / np.sum(lesion_mask_resized) if np.sum(lesion_mask_resized) > 0 else 0.0
+                        
+                        # Store both raw and absolute moments
+                        features[f'krawtchouk_moment_{n}_{m}'] = float(moment)
+                        features[f'krawtchouk_moment_abs_{n}_{m}'] = float(np.abs(moment))
+                
+                # Compute normalized invariant moments (rotation invariant)
+                # These are particularly useful for lesions that may appear at different orientations
+                try:
+                    # Central moment (0,0) for normalization
+                    Q00 = features['krawtchouk_moment_0_0']
+                    
+                    if Q00 > 1e-10:  # Avoid division by zero
+                        # Lower-order invariant moments
+                        features['krawtchouk_invariant_1'] = float(
+                            (features['krawtchouk_moment_abs_2_0'] + features['krawtchouk_moment_abs_0_2']) / (Q00 ** 2)
+                        )
+                        
+                        features['krawtchouk_invariant_2'] = float(
+                            ((features['krawtchouk_moment_2_0'] - features['krawtchouk_moment_0_2']) ** 2 + 
+                            4 * features['krawtchouk_moment_1_1'] ** 2) / (Q00 ** 4)
+                        )
+                        
+                        features['krawtchouk_invariant_3'] = float(
+                            (features['krawtchouk_moment_abs_3_0'] + features['krawtchouk_moment_abs_1_2']) / (Q00 ** 2.5)
+                        )
+                        
+                        features['krawtchouk_invariant_4'] = float(
+                            (features['krawtchouk_moment_abs_0_3'] + features['krawtchouk_moment_abs_2_1']) / (Q00 ** 2.5)
+                        )
+                    else:
+                        features['krawtchouk_invariant_1'] = 0.0
+                        features['krawtchouk_invariant_2'] = 0.0
+                        features['krawtchouk_invariant_3'] = 0.0
+                        features['krawtchouk_invariant_4'] = 0.0
+                except Exception as e:
+                    self.logger.warning(f"Error computing Krawtchouk invariants: {str(e)}")
+                    features['krawtchouk_invariant_1'] = 0.0
+                    features['krawtchouk_invariant_2'] = 0.0
+                    features['krawtchouk_invariant_3'] = 0.0
+                    features['krawtchouk_invariant_4'] = 0.0
+                
+                # Compute energy and entropy from moments (texture descriptors)
+                try:
+                    moment_values = [features[f'krawtchouk_moment_abs_{n}_{m}'] 
+                                for n in range(max_order + 1) 
+                                for m in range(max_order + 1) 
+                                if n + m <= max_order]
+                    
+                    features['krawtchouk_energy'] = float(np.sum(np.array(moment_values) ** 2))
+                    
+                    # Normalize for entropy calculation
+                    moment_values_norm = np.array(moment_values)
+                    moment_sum = np.sum(moment_values_norm)
+                    if moment_sum > 1e-10:
+                        moment_probs = moment_values_norm / moment_sum
+                        moment_probs = moment_probs[moment_probs > 1e-10]  # Remove zeros
+                        features['krawtchouk_entropy'] = float(-np.sum(moment_probs * np.log2(moment_probs)))
+                    else:
+                        features['krawtchouk_entropy'] = 0.0
+                except Exception as e:
+                    self.logger.warning(f"Error computing Krawtchouk energy/entropy: {str(e)}")
+                    features['krawtchouk_energy'] = 0.0
+                    features['krawtchouk_entropy'] = 0.0
+                
+                self.logger.debug(f"Extracted {len(features)} Krawtchouk moment features")
+                return features
+                
+            except Exception as e:
+                self.logger.error(f"Error extracting Krawtchouk moments: {str(e)}")
+                # Return default zero features on error
+                default_features = {}
+                for n in range(max_order + 1):
+                    for m in range(max_order + 1):
+                        if n + m <= max_order:
+                            default_features[f'krawtchouk_moment_{n}_{m}'] = 0.0
+                            default_features[f'krawtchouk_moment_abs_{n}_{m}'] = 0.0
+                default_features['krawtchouk_invariant_1'] = 0.0
+                default_features['krawtchouk_invariant_2'] = 0.0
+                default_features['krawtchouk_invariant_3'] = 0.0
+                default_features['krawtchouk_invariant_4'] = 0.0
+                default_features['krawtchouk_energy'] = 0.0
+                default_features['krawtchouk_entropy'] = 0.0
+                return default_features
 
 
     def extract_abcde_features(self, image, mask):

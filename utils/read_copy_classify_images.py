@@ -10,7 +10,6 @@ df = pd.read_csv(csv_file)
 # Path to the image folder
 image_folder = "E:/FacultyOfScience/My Master/Thesis/DataSet/HAM10000/"
 
-# Paths to the destination folders
 benign_folder = "data/sk"
 malignant_folder = "data/bcc"
 
@@ -18,20 +17,18 @@ malignant_folder = "data/bcc"
 os.makedirs(benign_folder, exist_ok=True)
 os.makedirs(malignant_folder, exist_ok=True)
 
-# Iterate over the rows of the DataFrame
 for index, row in df.iterrows():
     image_filename = row['isic_id'] + '.jpg'
-    diagnosis = str(row['diagnosis_3']).lower()  # Ensure it's a string
+    diagnosis = str(row['diagnosis_3']).lower()  
     
     source_image_path = os.path.join(image_folder, image_filename)
     
-    # Depending on the diagnosis, move the image to the appropriate folder
     if 'keratosis' in diagnosis:
         destination_path = os.path.join(benign_folder, image_filename)
     elif 'basal cell carcinoma' in diagnosis:
         destination_path = os.path.join(malignant_folder, image_filename)
     else:
-        continue  # Skip if diagnosis is not recognized
+        continue  
     
     # Copy the image to the destination folder
     if os.path.exists(source_image_path):

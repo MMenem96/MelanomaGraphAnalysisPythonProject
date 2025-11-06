@@ -426,19 +426,6 @@ def generate_summary_table(results, logger, table_num=1, title="Model Comparison
 
 def plot_learning_curve(estimator, X, y, cv=5, n_jobs=None, train_sizes=np.linspace(0.1, 1.0, 5),
                        title="Learning Curve", save_path=None):
-    """
-    Plot learning curves to show model performance vs training set size.
-    
-    Args:
-        estimator: ML model/estimator
-        X: Feature matrix
-        y: Target labels
-        cv: Cross-validation folds
-        n_jobs: Number of parallel jobs
-        train_sizes: Training set sizes to evaluate
-        title: Plot title
-        save_path: Path to save the plot
-    """
     try:
         from sklearn.model_selection import learning_curve
         import matplotlib.pyplot as plt
@@ -1358,6 +1345,61 @@ def train_features(args, logger):
                     plt.close()
                     
                     logger.info(f"ROC curve saved to {output_path}")
+
+
+
+                 # 1. Precision-Recall Curve
+                if y_pred_proba is not None:
+                    from sklearn.metrics import precision_recall_curve, average_precision_score
+                    
+                    precision_vals, recall_vals, _ = precision_recall_curve(y_test, y_pred_proba)
+                    ap_score = average_precision_score(y_test, y_pred_proba)
+                    
+                    plt.figure(figsize=(8, 6))
+                    plt.plot(recall_vals, precision_vals, label=f'{name} (AP = {ap_score:.3f})')
+                    plt.xlabel('Recall (Sensitivity)')
+                    plt.ylabel('Precision')
+                    plt.title(f'Precision-Recall Curve - {name}')
+                    plt.legend()
+                    plt.grid(True, alpha=0.3)
+                    
+                    output_path = f'output/metrics/pr_curve_{name.replace(" ", "_")}.png'
+                    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+                    plt.close()
+                    logger.info(f"Precision-Recall curve saved to {output_path}")
+                
+                # 2. Confusion Matrix Heatmap
+                import seaborn as sns
+                
+                plt.figure(figsize=(6, 5))
+                sns.heatmap(conf_matrix, annot=True, fmt='d', cmap='Blues',
+                           xticklabels=['SK', 'BCC'], yticklabels=['SK', 'BCC'])
+                plt.title(f'Confusion Matrix - {name}')
+                plt.xlabel('Predicted')
+                plt.ylabel('Actual')
+                
+                output_path = f'output/metrics/confusion_matrix_{name.replace(" ", "_")}.png'
+                plt.savefig(output_path, dpi=300, bbox_inches='tight')
+                plt.close()
+                logger.info(f"Confusion matrix saved to {output_path}")
+                
+                # 3. Prediction Probability Distribution
+                if y_pred_proba is not None:
+                    plt.figure(figsize=(10, 6))
+                    plt.hist(y_pred_proba[y_test == 0], alpha=0.7, label='SK (Class 0)', bins=30, color='blue')
+                    plt.hist(y_pred_proba[y_test == 1], alpha=0.7, label='BCC (Class 1)', bins=30, color='red')
+                    plt.axvline(x=0.5, color='black', linestyle='--', label='Decision Threshold')
+                    plt.xlabel('Prediction Probability')
+                    plt.ylabel('Frequency')
+                    plt.title(f'Prediction Probability Distribution - {name}')
+                    plt.legend()
+                    plt.grid(True, alpha=0.3)
+                    
+                    output_path = f'output/metrics/prob_distribution_{name.replace(" ", "_")}.png'
+                    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+                    plt.close()
+                    logger.info(f"Probability distribution saved to {output_path}")
+
                 
                 # Generate feature importance plot if available
                 if hasattr(clf, 'feature_importances_'):
@@ -1539,6 +1581,94 @@ def train_features(args, logger):
             except Exception as e:
                 logger.error(f"Error training {name}: {str(e)}")
                 # Continue with the next classifier
+
+            # 1. Model Performance Comparison Bar Chart
+            if len(results) > 1:
+                metrics = ['AC', 'SN', 'SP', 'PR', 'F1']
+                model_names = list(results.keys())
+                
+                fig, ax = plt.subplots(figsize=(12, 8))
+                x = np.arange(len(metrics))
+                width = 0.8 / len(model_names)
+                
+                for i, model in enumerate(model_names):
+                    values = [results[model].get(metric, 0) for metric in metrics]
+                    ax.bar(x + i*width, values, width, label=model, alpha=0.8)
+                
+                ax.set_xlabel('Metrics')
+                ax.set_ylabel('Score (%)')
+                ax.set_title('Model Performance Comparison')
+                ax.set_xticks(x + width * (len(model_names) - 1) / 2)
+                ax.set_xticklabels(['Accuracy', 'Sensitivity', 'Specificity', 'Precision', 'F1'])
+                ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+                ax.grid(True, alpha=0.3)
+                plt.ylim(0, 105)
+                
+                output_path = 'output/metrics/model_comparison.png'
+                plt.savefig(output_path, dpi=300, bbox_inches='tight')
+                plt.close()
+                logger.info(f"Model comparison chart saved to {output_path}")
+            
+            # 2. Combined ROC Curves for All Models
+            if len(results) > 1:
+                plt.figure(figsize=(10, 8))
+                
+                for model_name, result in results.items():
+                    if result.get('y_pred_proba') is not None:
+                        fpr, tpr, _ = roc_curve(y_test, result['y_pred_proba'])
+                        auc_score = result.get('test_roc_auc', 0)
+                        plt.plot(fpr, tpr, label=f'{model_name} (AUC = {auc_score:.3f})', linewidth=2)
+                
+                plt.plot([0, 1], [0, 1], 'k--', alpha=0.5, label='Random Classifier')
+                plt.xlabel('False Positive Rate')
+                plt.ylabel('True Positive Rate')
+                plt.title('ROC Curves Comparison - All Models')
+                plt.legend(loc='lower right')
+                plt.grid(True, alpha=0.3)
+                
+                output_path = 'output/metrics/roc_curves_combined.png'
+                plt.savefig(output_path, dpi=300, bbox_inches='tight')
+                plt.close()
+                logger.info(f"Combined ROC curves saved to {output_path}")
+            
+            # 3. F1 Score Radar Chart (if multiple models)
+            if len(results) >= 3:
+                try:
+                    # Create radar chart for top 3 models by F1 score
+                    sorted_models = sorted(results.items(), key=lambda x: x[1].get('F1', 0), reverse=True)[:3]
+                    
+                    categories = ['Accuracy', 'Sensitivity', 'Specificity', 'Precision', 'F1']
+                    angles = np.linspace(0, 2 * np.pi, len(categories), endpoint=False).tolist()
+                    angles += angles[:1]  # Complete the circle
+                    
+                    fig, ax = plt.subplots(figsize=(10, 10), subplot_kw=dict(projection='polar'))
+                    
+                    colors = ['red', 'blue', 'green']
+                    for i, (model_name, metrics) in enumerate(sorted_models):
+                        values = [metrics.get('AC', 0)/100, metrics.get('SN', 0)/100, 
+                                metrics.get('SP', 0)/100, metrics.get('PR', 0)/100, 
+                                metrics.get('F1', 0)/100]
+                        values += values[:1]  # Complete the circle
+                        
+                        ax.plot(angles, values, 'o-', linewidth=2, label=model_name, color=colors[i])
+                        ax.fill(angles, values, alpha=0.25, color=colors[i])
+                    
+                    ax.set_xticks(angles[:-1])
+                    ax.set_xticklabels(categories)
+                    ax.set_ylim(0, 1)
+                    ax.set_title('Top 3 Models Performance Radar Chart', size=16, pad=20)
+                    plt.legend(loc='upper right', bbox_to_anchor=(1.2, 1.0))
+                    
+                    output_path = 'output/metrics/radar_chart_top3.png'
+                    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+                    plt.close()
+                    logger.info(f"Radar chart saved to {output_path}")
+                except Exception as e:
+                    logger.warning(f"Could not create radar chart: {str(e)}")
+
+
+
+
         
         # Generate summary table for all classifiers
         generate_summary_table(results, logger, table_num=5, 
