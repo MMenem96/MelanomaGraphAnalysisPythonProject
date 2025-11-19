@@ -46,20 +46,15 @@ from src.conventional_features import ConventionalFeatureExtractor
 
 from src.segmentation.skin_lesion_processor import SkinLesionProcessor
 from catboost import CatBoostClassifier
-
+from lightgbm import LGBMClassifier
+from sklearn.ensemble import ExtraTreesClassifier
+from sklearn.svm import LinearSVC
+from sklearn.calibration import CalibratedClassifierCV
 # Dictionary of available classifiers
 CLASSIFIERS = {
     'SVM (RBF)': {
         'class': SVC,
-        'params': {'kernel': 'rbf', 'C': 10.0, 'gamma': 'scale', 'probability': True, 'random_state': 42}
-    },
-    'SVM (Sigmoid)': {
-        'class': SVC,
-        'params': {'kernel': 'sigmoid', 'C': 1.0, 'gamma': 'scale', 'probability': True, 'random_state': 42}
-    },
-    'SVM (Poly)': {
-        'class': SVC,
-        'params': {'kernel': 'poly', 'C': 1.0, 'degree': 3, 'gamma': 'scale', 'probability': True, 'random_state': 42}
+        'params': {'kernel': 'rbf', 'C': 50.0, 'gamma': 'auto', 'probability': True, 'random_state': 42}
     },
     'SVM (Linear)': {
         'class': SVC,
@@ -71,20 +66,27 @@ CLASSIFIERS = {
     },
     'MLP': {
         'class': MLPClassifier,
-        'params': {'hidden_layer_sizes': (100, 50), 'activation': 'relu', 'solver': 'adam', 'alpha': 0.0001,
-                 'learning_rate': 'adaptive', 'max_iter': 200, 'random_state': 42}
-    },
-    'KNN': {
-        'class': KNeighborsClassifier,
-        'params': {'n_neighbors': 5, 'weights': 'distance', 'algorithm': 'auto', 'p': 2}
+        'params': {'hidden_layer_sizes': (256, 128, 64), 'activation': 'relu', 'solver': 'adam', 'alpha': 0.0001,
+                 'learning_rate': 'adaptive', 'max_iter': 1000, 'random_state': 42, 'early_stopping': True}
     },
     'Gradient Boosting': {
         'class': GradientBoostingClassifier,
-        'params': {'n_estimators': 100, 'learning_rate': 0.1, 'max_depth': 3, 'random_state': 42}
+        'params': {'n_estimators': 500, 'learning_rate': 0.1, 'max_depth': 3, 'random_state': 42}
     },
     'Logistic Regression': {
-        'class': LogisticRegression,
-        'params': {'max_iter': 1000, 'random_state': 42, 'solver': 'lbfgs'}
+        'class': CalibratedClassifierCV,  # Wrapper for better stability
+        'params': {
+            'estimator': LogisticRegression(
+                max_iter=3000,
+                solver='lbfgs',
+                C=1.0,
+                tol=1e-3,  # Less strict tolerance to prevent over-iteration
+                random_state=42
+            ),
+            'method': 'sigmoid',  # Platt scaling for calibration
+            'cv': 3,  # Internal cross-validation
+            'n_jobs': -1
+        }
     },
     'XGBoost': {
         'class': XGBClassifier,
@@ -93,8 +95,44 @@ CLASSIFIERS = {
     'CatBoost': {
         'class': CatBoostClassifier,
         'params': {'verbose': False, 'random_state': 42, 'iterations': 200, 'learning_rate': 0.1, 'depth': 6}
+    },
+    "LightGBM": {
+        "class": LGBMClassifier,
+        "params": {
+            "num_leaves": 127,  # Increased from 63 to prevent overfitting on small feature subsets
+            "n_estimators": 800,
+            "learning_rate": 0.03,
+            "min_child_samples": 30,  # Increased from 20 to require more samples per leaf
+            "colsample_bytree": 0.7,  # Reduced from 0.8 to use fewer features per tree
+            "subsample": 0.85,
+            "reg_alpha": 0.5,  # Increased from 0.1 for stronger regularization
+            "reg_lambda": 2.0,  # Increased from 1.0 for stronger regularization
+            "min_split_gain": 0.01,  # NEW: require minimum gain for splits
+            "min_child_weight": 0.001,  # NEW: minimum sum of instance weight in a child
+            "class_weight": "balanced",
+            "random_state": 42,
+            "n_jobs": -1,
+            "verbosity": -1,  # NEW: suppress warnings
+            "force_col_wise": True,
+            "feature_pre_filter": False
+        }
+    },
+    "Extra Trees": {
+        "class": ExtraTreesClassifier,
+        "params": {
+            "n_estimators": 400,
+            "max_depth": 20,
+            "min_samples_split": 4,
+            "min_samples_leaf": 2,
+            "max_features": "sqrt",
+            "bootstrap": True,
+            "class_weight": "balanced",
+            "random_state": 42,
+            "n_jobs": -1
+        }
     }
 }
+
 
 """Utils"""
 
@@ -182,10 +220,10 @@ def parse_args():
     parser.add_argument('--feature_set', type=str, default='full',
                         choices=['basic', 'color', 'texture', 'shape', 'dermoscopy', 'full'],
                         help='Set of features to use for conventional feature engineering')
-    parser.add_argument('--feature_selection', type=str, default='none',
+    parser.add_argument('--feature_selection', type=str, default='mutual_info',
                         choices=['none', 'mutual_info', 'chi2', 'f_test', 'rfe'],
                         help='Feature selection method for conventional feature engineering')
-    parser.add_argument('--n_features', type=int, default=60,
+    parser.add_argument('--n_features', type=int, default=350,
                         help='Number of features to select when using feature selection')
     parser.add_argument('--feature_classifiers', type=str, default='all',
                         help='Comma-separated list of classifiers to train with feature engineering')
@@ -696,6 +734,17 @@ def train_features(args, logger):
                
                 logger.debug(f"Extracting {args.feature_set} features with proper lesion masking")
                 mask = generate_lesion_mask_from_transparent_background(image, threshold=10)
+                # Validate mask
+                if np.sum(mask) < 100:  # Less than 100 pixels
+                    logger.warning(f"Mask too small for {image_path}: {np.sum(mask)} pixels")
+                    continue
+
+                # Optional: Save mask visualization for debugging
+                if saved_bcc_count < 2 or saved_sk_count < 2:
+                    mask_vis = (mask * 255).astype(np.uint8)
+                    mask_save_path = os.path.join(preprocessed_dir, f"{class_name}_{sample_number}_mask.jpg")
+                    cv2.imwrite(mask_save_path, mask_vis)
+                    
                 features = feature_extractor.extract_all_features(image, mask)
                 
                 features_list.append(features)
@@ -849,8 +898,18 @@ def train_features(args, logger):
             elif args.feature_selection == 'f_test':
                 selector = SelectKBest(f_classif, k=min(args.n_features, X_train.shape[1]))
             elif args.feature_selection == 'rfe':
-                base_model = RandomForestClassifier(n_estimators=100, random_state=42)
-                selector = RFE(estimator=base_model, n_features_to_select=min(args.n_features, X_train.shape[1]))
+                X_train = np.nan_to_num(X_train, nan=0.0, posinf=1e10, neginf=-1e10)
+                X_test = np.nan_to_num(X_test, nan=0.0, posinf=1e10, neginf=-1e10)
+                base_model =  XGBClassifier(
+                    n_estimators=100,
+                    max_depth=4,
+                    learning_rate=0.1,
+                    random_state=42,
+                    eval_metric='logloss',
+                    enable_categorical=False,
+                    tree_method='hist'
+                )
+                selector = RFE(estimator=base_model, n_features_to_select=min(args.n_features, X_train.shape[1]), step=5)
             
             # Apply selection
             X_train = selector.fit_transform(X_train, y_train)
@@ -924,13 +983,16 @@ def train_features(args, logger):
                 'svm_rbf': 'SVM (RBF)',
                 'svm_linear': 'SVM (Linear)',
                 'svm_sigmoid': 'SVM (Sigmoid)',
-                'svm_poly': 'SVM (Poly)',
+                'svm_poly': 'SVM (Poly)', 
                 'knn': 'KNN',
                 'mlp': 'MLP',
                 'gb': 'Gradient Boosting',
                 'logistic': 'Logistic Regression',
                 'xgboost': 'XGBoost',
-                'catboost': 'CatBoost'
+                'catboost': 'CatBoost',
+                'lgbm': 'LightGBM',
+                'extra_trees': 'Extra Trees',
+                'calibrated_svm': 'Calibrated SVM'
             }
             
             requested_short_names = args.feature_classifiers.lower().split(',')
@@ -959,76 +1021,90 @@ def train_features(args, logger):
         
         # Hyperparameter optimization if specified
         if args.optimize:
-            logger.info("Performing hyperparameter optimization")
+            logger.info("Performing hyperparameter optimization with enhanced grids")
             
             optimized_classifiers = {}
-            
-            # We've already determined if we're working with a very small dataset earlier
+            is_very_small_dataset = len(all_labels) < 30
             
             for name, clf in classifiers.items():
                 logger.info(f"Optimizing {name}")
                 
-                # Use simplified parameter grids for very small datasets
+                # Enhanced parameter grids optimized for 2257 samples, 511 features
                 if is_very_small_dataset:
-                    logger.info(f"Using simplified parameter grid for small dataset (size: {len(y_train)} samples)")
-                    if name == 'Random Forest':
-                        param_grid = {
-                            'n_estimators': [50],
-                            'max_depth': [3, None],
-                            'min_samples_leaf': [1, 2]
-                        }
+                    # Simplified grids for small datasets
+                    if name == 'RF':
+                        param_grid = {'n_estimators': [100], 'max_depth': [5, None], 'min_samples_leaf': [1, 2]}
                     elif 'SVM' in name:
-                        param_grid = {
-                            'C': [1, 10],
-                            'gamma': ['scale', 'auto']
-                        }
-                    elif name == 'KNN':
-                        param_grid = {
-                            'n_neighbors': [3, 5],
-                            'weights': ['uniform', 'distance']
-                        }
-                    elif name == 'MLP':
-                        param_grid = {
-                            'hidden_layer_sizes': [(10,), (20,)],
-                            'alpha': [0.001, 0.01]
-                        }
+                        param_grid = {'C': [1, 10], 'gamma': ['scale', 'auto']}
                     elif name == 'XGBoost':
+                        param_grid = {'n_estimators': [100], 'max_depth': [3], 'learning_rate': [0.1]}
+                    elif name == 'CatBoost':
+                        param_grid = {'iterations': [200], 'depth': [4], 'learning_rate': [0.1]}
+                    # For LightGBM specifically
+                    elif name == 'LightGBM':
                         param_grid = {
-                            'n_estimators': [50],
-                            'max_depth': [3],
-                            'learning_rate': [0.1]
-                        }
-                    elif name == 'Gradient Boosting':
-                        param_grid = {
-                            'n_estimators': [50],
-                            'max_depth': [3],
-                            'learning_rate': [0.1]
-                        }
+                            'num_leaves': [31, 63, 127],             # Include smaller values
+                            'n_estimators': [300, 500, 800],
+                            'learning_rate': [0.01, 0.03, 0.05],     # Include 0.03
+                            'min_child_samples': [20, 30, 50],       # More aggressive
+                            'min_split_gain': [0.0, 0.01, 0.05],     # NEW: test gain thresholds
+                            'subsample': [0.7, 0.8, 0.9],            # Include 0.7
+                            'colsample_bytree': [0.7, 0.8, 0.9],     # Include 0.7
+                            'reg_alpha': [0.1, 0.5, 1.0],            # Stronger regularization
+                            'reg_lambda': [1.0, 2.0, 3.0],           # Stronger regularization
+                            'class_weight': ['balanced']
+                            }
+                    else:
+                        param_grid = {}
                 else:
-                    # Standard parameter grids for normal-sized datasets
-                    if name == 'Random Forest':
+                    # Optimized grids based on dataset: 2257 samples, 511 features, 83.6% class balance
+                    if name == 'RF':
                         param_grid = {
-                            'n_estimators': [50, 100, 200],
-                            'max_depth': [None, 10, 20, 30],
-                            'min_samples_split': [2, 5, 10],
-                            'min_samples_leaf': [1, 2, 4]
+                            'n_estimators': [200, 300, 500],
+                            'max_depth': [10, 15, 20, None],
+                            'min_samples_split': [2, 5],
+                            'min_samples_leaf': [1, 2],
+                            'max_features': ['sqrt', 'log2'],
+                            'class_weight': ['balanced', None]
                         }
-                    elif 'SVM' in name:
+                    elif 'SVM (RBF)' in name:
+                        param_grid = {
+                            'C': [1, 10, 50, 100],
+                            'gamma': ['scale', 0.01, 0.1, 1],
+                            'class_weight': ['balanced', None]
+                        }
+                    elif 'SVM (Linear)' in name:
                         param_grid = {
                             'C': [0.1, 1, 10, 100],
-                            'gamma': ['scale', 'auto', 0.1, 0.01]
+                            'class_weight': ['balanced', None]
                         }
-                    elif name == 'KNN':
+                    elif name == 'CatBoost':
                         param_grid = {
-                            'n_neighbors': [3, 5, 7, 9, 11],
-                            'weights': ['uniform', 'distance'],
-                            'p': [1, 2]  # Manhattan or Euclidean
+                            'iterations': [500, 800, 1000],
+                            'depth': [4, 5, 6],
+                            'learning_rate': [0.03, 0.05, 0.1],
+                            'l2_leaf_reg': [3, 5, 7]
                         }
-                    elif name == 'MLP':
+                    elif name == 'LightGBM':
                         param_grid = {
-                            'hidden_layer_sizes': [(50,), (100,), (50, 25), (100, 50)],
-                            'alpha': [0.0001, 0.001, 0.01],
-                            'learning_rate': ['constant', 'adaptive']
+                            'num_leaves': [31, 63, 127],             # Include smaller values
+                            'n_estimators': [300, 500, 800],
+                            'learning_rate': [0.01, 0.03, 0.05],     # Include 0.03
+                            'min_child_samples': [20, 30, 50],       # More aggressive
+                            'min_split_gain': [0.0, 0.01, 0.05],     # NEW: test gain thresholds
+                            'subsample': [0.7, 0.8, 0.9],            # Include 0.7
+                            'colsample_bytree': [0.7, 0.8, 0.9],     # Include 0.7
+                            'reg_alpha': [0.1, 0.5, 1.0],            # Stronger regularization
+                            'reg_lambda': [1.0, 2.0, 3.0],           # Stronger regularization
+                            'class_weight': ['balanced']
+                        }
+                    elif name == 'ExtraTrees':
+                        param_grid = {
+                            'n_estimators': [200, 300, 500],
+                            'max_depth': [10, 15, None],
+                            'min_samples_split': [2, 5],
+                            'max_features': ['sqrt', 'log2'],
+                            'class_weight': ['balanced', None]
                         }
                     elif name == 'XGBoost':
                         param_grid = {
@@ -1046,62 +1122,62 @@ def train_features(args, logger):
                         }
                     elif name == 'Logistic Regression':
                         param_grid = {
-                            'C': [0.1, 1, 10, 100],
-                            'penalty': ['l1', 'l2'],
-                            'solver': ['liblinear', 'saga']
+                            'estimator__C': [0.1, 1.0, 10.0],  # Note the double underscore for nested params
+                            'estimator__max_iter': [2000, 3000],
+                            'method': ['sigmoid', 'isotonic'],
+                            'cv': [3, 5]
                         }
+                    elif name == 'MLP':
+                        param_grid = {
+                            'hidden_layer_sizes': [(50,), (100,), (50, 25), (100, 50)],
+                            'alpha': [0.0001, 0.001, 0.01],
+                            'learning_rate': ['constant', 'adaptive']
+                        }
+                    elif name == 'KNN':
+                        param_grid = {
+                            'n_neighbors': [3, 5, 7, 9],
+                            'weights': ['uniform', 'distance'],
+                            'metric': ['euclidean', 'manhattan']
+                        }
+                    else:
+                        param_grid = {}
                 
-                # Define a variable to track if we have a param grid for this classifier
-                has_param_grid = True
-                    
-                # Initialize param_grid as an empty dictionary if it doesn't exist
-                param_grid = {}
-                
-                # If we don't have a param grid defined for this classifier or it's a special case
                 if not param_grid:
-                    has_param_grid = False
-                    # Default - skip optimization
                     optimized_classifiers[name] = clf
                     continue
                 
-                # Determine appropriate cross-validation strategy based on dataset size
-                # For very small datasets, use fewer folds or even LOO (Leave-One-Out) CV
-                cv_strategy = 5  # Default 5-fold CV
-                
-                # Count samples per class to determine appropriate CV strategy
+                # Adaptive CV strategy
                 class_counts = np.bincount(y_train)
                 min_class_count = min(class_counts[class_counts > 0])
                 
                 if min_class_count < 5:
-                    # For extremely small datasets (< 5 samples in smallest class)
-                    logger.info(f"Very small dataset detected ({min_class_count} samples in smallest class)")
-                    logger.info(f"Using 2-fold stratified CV for {name}")
                     cv_strategy = StratifiedKFold(n_splits=2, shuffle=True, random_state=42)
                 elif min_class_count < 10:
-                    # For small datasets (<10 samples in smallest class)
-                    logger.info(f"Small dataset detected ({min_class_count} samples in smallest class)")
-                    logger.info(f"Using 3-fold stratified CV for {name}")
                     cv_strategy = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)
-                    
-                # Use GridSearchCV for smaller grids, RandomizedSearchCV for larger ones
-                if np.prod([len(v) for v in param_grid.values()]) > 30:
+                else:
+                    cv_strategy = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+                
+                # Use RandomizedSearchCV for large grids
+                n_combinations = np.prod([len(v) for v in param_grid.values()])
+                
+                if n_combinations > 50:
                     search = RandomizedSearchCV(
-                        clf, param_grid, n_iter=20, cv=cv_strategy, scoring='f1', 
-                        random_state=42, n_jobs=-1
+                        clf, param_grid, n_iter=50, cv=cv_strategy, 
+                        scoring='f1', random_state=42, n_jobs=-1, verbose=1
                     )
                 else:
                     search = GridSearchCV(
-                        clf, param_grid, cv=cv_strategy, scoring='f1', n_jobs=-1
+                        clf, param_grid, cv=cv_strategy, 
+                        scoring='f1', n_jobs=-1, verbose=1
                     )
                 
                 search.fit(X_train, y_train)
                 
-                logger.info(f"Best parameters for {name}: {search.best_params_}")
-                logger.info(f"Best cross-validation score: {search.best_score_:.4f}")
+                logger.info(f"Best params for {name}: {search.best_params_}")
+                logger.info(f"Best CV F1: {search.best_score_:.4f}")
                 
                 optimized_classifiers[name] = search.best_estimator_
             
-            # Use optimized classifiers for further evaluation
             classifiers = optimized_classifiers
         
         # Train and evaluate each classifier
@@ -1846,8 +1922,21 @@ def train_models_from_features(features_filepath, args, logger, custom_params=No
             elif args.feature_selection == 'f_test':
                 selector = SelectKBest(f_classif, k=min(args.n_features, X_train.shape[1]))
             elif args.feature_selection == 'rfe':
-                base_model = RandomForestClassifier(n_estimators=100, random_state=42)
-                selector = RFE(estimator=base_model, n_features_to_select=min(args.n_features, X_train.shape[1]))
+                X_train = np.nan_to_num(X_train, nan=0.0, posinf=1e10, neginf=-1e10)
+                X_test = np.nan_to_num(X_test, nan=0.0, posinf=1e10, neginf=-1e10)
+                X_train = np.clip(X_train, -1e8, 1e8)
+                X_test = np.clip(X_test, -1e8, 1e8)
+                base_model =  XGBClassifier(
+                    n_estimators=100,
+                    max_depth=4,
+                    learning_rate=0.1,
+                    random_state=42,
+                    eval_metric='logloss',
+                    enable_categorical=False,
+                    tree_method='hist'
+                )
+                selector = RFE(estimator=base_model, n_features_to_select=min(args.n_features, X_train.shape[1]), step=5)
+        
             
             X_train = selector.fit_transform(X_train, y_train)
             X_test = selector.transform(X_test)
@@ -1997,6 +2086,159 @@ def train_models_from_features(features_filepath, args, logger, custom_params=No
         
         logger.info(f"Training {len(classifiers)} classifiers: {', '.join(classifiers.keys())}")
         
+
+        # HYPERPARAMETER OPTIMIZATION 
+        if args.optimize:
+            logger.info("Performing hyperparameter optimization for loaded features")
+            
+            optimized_classifiers = {}
+            is_very_small_dataset = len(y_train) < 30
+            
+            for name, clf in classifiers.items():
+                logger.info(f"Optimizing {name}")
+                
+                # Use the SAME parameter grids as in train_features()
+                if is_very_small_dataset:
+                    # Simplified grids for small datasets
+                    if name == 'RF':
+                        param_grid = {'n_estimators': [100], 'max_depth': [5, None], 'min_samples_leaf': [1, 2]}
+                    elif 'SVM' in name:
+                        param_grid = {'C': [1, 10], 'gamma': ['scale', 'auto']}
+                    elif name == 'XGBoost':
+                        param_grid = {'n_estimators': [100], 'max_depth': [3], 'learning_rate': [0.1]}
+                    elif name == 'CatBoost':
+                        param_grid = {'iterations': [200], 'depth': [4], 'learning_rate': [0.1]}
+                    elif name == 'LightGBM':
+                        param_grid = {'num_leaves': [31], 'n_estimators': [100], 'learning_rate': [0.1]}
+                    else:
+                        param_grid = {}
+                else:
+                    # Aggressive grids for high accuracy
+                    if name == 'RF':
+                        param_grid = {
+                            'n_estimators': [200, 300, 500],
+                            'max_depth': [10, 15, 20, None],
+                            'min_samples_split': [2, 5],
+                            'min_samples_leaf': [1, 2],
+                            'max_features': ['sqrt', 'log2'],
+                            'class_weight': ['balanced', None]
+                        }
+                    elif 'SVM (RBF)' in name:
+                        param_grid = {
+                            'C': [1, 10, 50, 100],
+                            'gamma': ['scale', 0.01, 0.1, 1],
+                            'class_weight': ['balanced', None]
+                        }
+                    elif 'SVM (Linear)' in name:
+                        param_grid = {
+                            'C': [0.1, 1, 10, 100],
+                            'class_weight': ['balanced', None]
+                        }
+                    elif name == 'CatBoost':
+                        param_grid = {
+                            'iterations': [500, 800, 1000],
+                            'depth': [4, 5, 6],
+                            'learning_rate': [0.03, 0.05, 0.1],
+                            'l2_leaf_reg': [3, 5, 7]
+                        }
+                    elif name == 'LightGBM':
+                        param_grid = {
+                            'num_leaves': [31, 63, 127],             # Include smaller values
+                            'n_estimators': [300, 500, 800],
+                            'learning_rate': [0.01, 0.03, 0.05],     # Include 0.03
+                            'min_child_samples': [20, 30, 50],       # More aggressive
+                            'min_split_gain': [0.0, 0.01, 0.05],     # NEW: test gain thresholds
+                            'subsample': [0.7, 0.8, 0.9],            # Include 0.7
+                            'colsample_bytree': [0.7, 0.8, 0.9],     # Include 0.7
+                            'reg_alpha': [0.1, 0.5, 1.0],            # Stronger regularization
+                            'reg_lambda': [1.0, 2.0, 3.0],           # Stronger regularization
+                            'class_weight': ['balanced']
+                        }
+                    elif name == 'ExtraTrees':
+                        param_grid = {
+                            'n_estimators': [200, 300, 500],
+                            'max_depth': [10, 15, None],
+                            'min_samples_split': [2, 5],
+                            'max_features': ['sqrt', 'log2'],
+                            'class_weight': ['balanced', None]
+                        }
+                    elif name == 'XGBoost':
+                        param_grid = {
+                            'n_estimators': [50, 100, 200],
+                            'max_depth': [3, 5, 7],
+                            'learning_rate': [0.01, 0.1, 0.2],
+                            'subsample': [0.8, 0.9, 1.0]
+                        }
+                    elif name == 'Gradient Boosting':
+                        param_grid = {
+                            'n_estimators': [50, 100, 200],
+                            'max_depth': [3, 5, 7],
+                            'learning_rate': [0.01, 0.1, 0.2],
+                            'subsample': [0.8, 0.9, 1.0]
+                        }
+                    elif name == 'Logistic Regression':
+                        param_grid = {
+                            'estimator__C': [0.1, 1.0, 10.0],  # Note the double underscore for nested params
+                            'estimator__max_iter': [2000, 3000],
+                            'method': ['sigmoid', 'isotonic'],
+                            'cv': [3, 5]
+                        }
+                    elif name == 'MLP':
+                        param_grid = {
+                            'hidden_layer_sizes': [(50,), (100,), (50, 25), (100, 50)],
+                            'alpha': [0.0001, 0.001, 0.01],
+                            'learning_rate': ['constant', 'adaptive']
+                        }
+                    elif name == 'KNN':
+                        param_grid = {
+                            'n_neighbors': [3, 5, 7, 9],
+                            'weights': ['uniform', 'distance'],
+                            'metric': ['euclidean', 'manhattan']
+                        }
+                    else:
+                        param_grid = {}
+                
+                if not param_grid:
+                    optimized_classifiers[name] = clf
+                    continue
+                
+                # Adaptive CV strategy
+                class_counts = np.bincount(y_train)
+                min_class_count = min(class_counts[class_counts > 0])
+                
+                if min_class_count < 5:
+                    cv_strategy = StratifiedKFold(n_splits=2, shuffle=True, random_state=42)
+                elif min_class_count < 10:
+                    cv_strategy = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)
+                else:
+                    cv_strategy = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+                
+                # Use RandomizedSearchCV for large grids
+                n_combinations = np.prod([len(v) for v in param_grid.values()])
+                
+                if n_combinations > 50:
+                    search = RandomizedSearchCV(
+                        clf, param_grid, n_iter=50, cv=cv_strategy, 
+                        scoring='f1', random_state=42, n_jobs=-1, verbose=1
+                    )
+                else:
+                    search = GridSearchCV(
+                        clf, param_grid, cv=cv_strategy, 
+                        scoring='f1', n_jobs=-1, verbose=1
+                    )
+                
+                search.fit(X_train, y_train)
+                
+                logger.info(f"Best params for {name}: {search.best_params_}")
+                logger.info(f"Best CV F1: {search.best_score_:.4f}")
+                
+                optimized_classifiers[name] = search.best_estimator_
+            
+            classifiers = optimized_classifiers
+        else:
+            logger.info("Skipping hyperparameter optimization (--optimize not specified)")
+
+
         # Train and evaluate models (rest remains the same)
         results = {}
         
