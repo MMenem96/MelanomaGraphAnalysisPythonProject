@@ -34,6 +34,7 @@ class ConventionalFeatureExtractor:
             enhanced_color_features = self.extract_enhanced_color_features(image, mask)
             features.update(enhanced_color_features)
 
+            # Paper Fractional Krawtchouk moments
             paper_fractional_krawtchouk_moments = self.extract_paper_fractional_krawtchouk_moments(image, mask)
             features.update(paper_fractional_krawtchouk_moments)
 
@@ -2370,7 +2371,40 @@ class ConventionalFeatureExtractor:
             # For each (α, β) pair, compute fractional moments
             for alpha in alpha_orders:
                 for beta in beta_orders:
-                    
+                    """
+                    # Compute eigenvalues for ALL basis indices -1 roots
+                    # λ_n(α) = exp(j * α * 2π * n / Nn)   for n = 0,1,...,max_n ()
+                    lambda_n_alpha = np.array([
+                        np.exp(1j * alpha * (2 * np.pi * n) / (max_n + 1))
+                        for n in range(max_n + 1)
+                    ])
+
+                    # λ_m(β) = exp(j * β * 2π * m / Nm)   for m = 0,1,...,max_m
+                    lambda_m_beta = np.array([
+                        np.exp(1j * beta * (2 * np.pi * m) / (max_m + 1))
+                        for m in range(max_m + 1)
+                    ])
+
+                    """
+                    # Compute eigenvalues for ALL basis indices 1 roots
+
+                    # Compute eigenvalues for ALL basis indices
+                    # λ_n(α) = exp(j * α * 2π * n / Nn)   for n = 0,1,...,max_n
+                    lambda_n_alpha = np.array([
+                        np.exp(1j * alpha * (2 * np.pi * n) / (max_n + 1))
+                        for n in range(max_n + 1)
+                    ])
+
+                    # λ_m(β) = exp(j * β * 2π * m / Nm)   for m = 0,1,...,max_m
+                    lambda_m_beta = np.array([
+                        np.exp(1j * beta * (2 * np.pi * m) / (max_m + 1))
+                        for m in range(max_m + 1)
+                    ])
+
+                    #lamda = 1 / k , alpha = 1, p = [0.1.......0.9], ps: Don't use more than one alpha
+
+
+                    """
                     # Compute eigenvalues for ALL basis indices
                     # λ_n(α) = exp(j * π * α * n) for n = 0, 1, 2, ..., max_n
                     lambda_n_alpha = np.array([np.exp(1j * np.pi * alpha * n) 
@@ -2380,6 +2414,7 @@ class ConventionalFeatureExtractor:
                     lambda_m_beta = np.array([np.exp(1j * np.pi * beta * m) 
                                             for m in range(max_m + 1)])
                     
+                    """
                     # ========================================
                     # STEP 4: Apply MDFRKT formula (Equation 14)
                     # Fractional_C_nm(α,β) = λ_n(α) * λ_m(β) * C_nm
@@ -2583,57 +2618,63 @@ class ConventionalFeatureExtractor:
     def _compute_weighted_polynomial_eq4(self, x, n, p, N):
         """
         Compute weighted polynomial EXACTLY as Equation (4) in paper.
-        
+
         φ_n(i) = 2F1(-n, -i; -N+1; 1/p) 
                 × sqrt[ C(N-1, i) * p^i * (1-p)^(N-1-i) ]
                 / sqrt[ ((p-1)/p)^n * n! / (-N+1)_n ]
-        
+
         All computations in LOG-SPACE for numerical stability.
         """
         from scipy.special import hyp2f1
-        
+
         if x < 0 or x > N or n < 0:
             return 0.0
-        
+
         p = float(np.clip(p, 1e-12, 1 - 1e-12))
-        
+
         try:
             # ========================================
             # Part 1: Hypergeometric function 2F1
             # ========================================
             z = 1.0 / p
             hyp_value = hyp2f1(-n, -x, -N + 1, z)
-            
+
             if not np.isfinite(hyp_value) or abs(hyp_value) < 1e-100:
                 return 0.0
-            
+
             # ========================================
             # Part 2: Numerator in LOG-SPACE
             # numerator = C(N-1, x) * p^x * (1-p)^(N-1-x)
             # ========================================
-            
+
             # Binomial coefficient C(N-1, x) in log-space
             log_binom = gammaln(N) - gammaln(x + 1) - gammaln(N - x)
-            
+
             # Weight p^x * (1-p)^(N-1-x) in log-space
             log_weight = x * np.log(p) + (N - 1 - x) * np.log(1 - p)
-            
+
             log_numerator = log_binom + log_weight
-            
+
             # ========================================
             # Part 3: Denominator in LOG-SPACE
             # denominator = ((p-1)/p)^n * n! / (-N+1)_n
             # ========================================
-            
-            # ((p-1)/p)^n in log-space
-            log_ratio = n * np.log(abs((p - 1) / p))
-            
+
+            # ((p-1)/p)^n in log-space (handle sign separately because ratio < 0 for 0<p<1)
+            ratio = (p - 1.0) / p
+            abs_ratio = abs(ratio)
+            log_ratio = n * np.log(abs_ratio)
+
+            # sign coming from ((p-1)/p)^n: (-1)^n when ratio < 0
+            sign_ratio = -1 if ratio < 0 else 1
+            sign_ratio = sign_ratio ** n
+
             # n! in log-space
             log_factorial = gammaln(n + 1)
-            
-            # Pochhammer (-N+1)_n in log-space
+
+            # Pochhammer (-N+1)_n in log-space and its sign
             a = -N + 1
-            
+
             if n == 0:
                 log_pochhammer = 0.0
                 sign_pochhammer = 1
@@ -2641,7 +2682,7 @@ class ConventionalFeatureExtractor:
                 # Negative integer case
                 # (-m)_n = (-1)^n * Γ(m+n) / Γ(m)
                 m = int(abs(round(a)))
-                
+
                 try:
                     log_pochhammer = gammaln(m + n) - gammaln(m)
                     sign_pochhammer = (-1) ** n
@@ -2657,41 +2698,48 @@ class ConventionalFeatureExtractor:
                 except:
                     log_pochhammer = 0.0
                     sign_pochhammer = 1
-            
-            # Combined denominator
+
+            # combined sign for denominator
+            sign_total = sign_ratio * sign_pochhammer
+
+            # Combined denominator (log-space)
             log_denominator = log_ratio + log_factorial - log_pochhammer
-            
+
             # ========================================
             # Part 4: Final normalization
             # norm = sqrt(numerator / denominator)
             # ========================================
-            
+
             log_norm = 0.5 * (log_numerator - log_denominator)
-            
+
             # Clip to prevent overflow/underflow
             log_norm = np.clip(log_norm, -100, 100)
-            
+
             if not np.isfinite(log_norm):
                 return 0.0
-            
+
             # Convert back from log-space
             normalization = np.exp(log_norm)
-            
-            # Apply Pochhammer sign
-            if sign_pochhammer == -1:
+
+            # Apply total sign (from ratio and Pochhammer)
+            if sign_total == -1:
                 normalization *= -1
-            
+
             # Final result
             result = hyp_value * normalization
-            
+
             if np.isfinite(result) and abs(result) > 1e-100:
                 return float(result)
-            
+
             return 0.0
-            
+
         except Exception as e:
             self.logger.warning(f"Error in polynomial: x={x}, n={n}, N={N}: {str(e)}")
             return 0.0
+
+
+
+
 
 
     def _get_default_paper_fkm_features(self, alpha_orders, beta_orders):

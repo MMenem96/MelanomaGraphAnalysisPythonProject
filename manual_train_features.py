@@ -220,14 +220,14 @@ def parse_args():
     parser.add_argument('--feature_set', type=str, default='full',
                         choices=['basic', 'color', 'texture', 'shape', 'dermoscopy', 'full'],
                         help='Set of features to use for conventional feature engineering')
-    parser.add_argument('--feature_selection', type=str, default='mutual_info',
+    parser.add_argument('--feature_selection', type=str, default='none',
                         choices=['none', 'mutual_info', 'chi2', 'f_test', 'rfe'],
                         help='Feature selection method for conventional feature engineering')
     parser.add_argument('--n_features', type=int, default=350,
                         help='Number of features to select when using feature selection')
     parser.add_argument('--feature_classifiers', type=str, default='all',
                         help='Comma-separated list of classifiers to train with feature engineering')
-    parser.add_argument('--optimize', action='store_true', default= False,
+    parser.add_argument('--optimize', action='store_true', default= True,
                         help='Perform hyperparameter optimization for feature-based classifiers')
     
     parser.add_argument('--apply-mask', action='store_true',
@@ -1944,6 +1944,39 @@ def train_models_from_features(features_filepath, args, logger, custom_params=No
             selected_indices = selector.get_support(indices=True)
             selected_feature_names = [feature_names[i] for i in selected_indices]
             logger.info(f"Selected {len(selected_feature_names)} features")
+            # **NEW: Save feature scores and rankings**
+            if hasattr(selector, 'scores_'):
+                # Get scores for selected features
+                feature_scores = [(feature_names[i], selector.scores_[i]) 
+                                 for i in selected_indices]
+                
+                # Sort by score (descending)
+                feature_scores_sorted = sorted(feature_scores, key=lambda x: x[1], reverse=True)
+                
+                # Save to file
+                scores_filename = f"output/features/selected_features_{args.feature_selection}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+                with open(scores_filename, 'w') as f:
+                    f.write(f"Feature Selection Method: {args.feature_selection}\n")
+                    f.write(f"Number of Selected Features: {len(selected_feature_names)}\n")
+                    f.write(f"Total Original Features: {len(feature_names)}\n")
+                    f.write(f"Selection Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+                    f.write("=" * 80 + "\n")
+                    f.write(f"{'Rank':<6} {'Feature Name':<50} {'Score':<15}\n")
+                    f.write("=" * 80 + "\n")
+                    
+                    for rank, (feature_name, score) in enumerate(feature_scores_sorted, 1):
+                        f.write(f"{rank:<6} {feature_name:<50} {score:<15.6f}\n")
+                
+                logger.info(f"Feature scores saved to: {scores_filename}")
+                
+                # Log top 20 features
+                logger.info(f"Top 20 features by {args.feature_selection} score:")
+                for i, (feature, score) in enumerate(feature_scores_sorted[:20], 1):
+                    logger.info(f"{i:2d}. {feature}: {score:.4f}")
+            else:
+                logger.info(f"First 20 selected features: {selected_feature_names[:20]}")
+
+ 
         else:
             selected_feature_names = feature_names
         
