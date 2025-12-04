@@ -51,7 +51,7 @@ class MDFKTImageAnalyzer:
         self.Lambda = self.get_lambda_eigenvalues(N, lambda_method)
         print()
 
-    def get_lambda_eigenvalues(self, N: int, method: str = 'mdfkt') -> np.ndarray:
+    def get_lambda_eigenvalues(self, N: int, method: str = 'reciprocal') -> np.ndarray:
         """
         Generate Lambda eigenvalues according to different formulas.
         
@@ -544,14 +544,16 @@ class MDFKTImageAnalyzer:
             
             # Row 1, Col 2: Reconstructed
             im2 = axes_ch[0, 1].imshow(f_rec, cmap='viridis', origin='lower', vmin=0, vmax=1)
-            axes_ch[0, 1].set_title(f'{channel_name} - Reconstructed\nError: {error:.2e}', 
+            axes_ch[0, 1].set_title(f'{channel_name} - Reconstructed', 
                                    fontsize=12, fontweight='bold')
             axes_ch[0, 1].axis('off')
             plt.colorbar(im2, ax=axes_ch[0, 1], fraction=0.046, pad=0.04)
             
-
-            # # Row 1, Col 3: Log Magnitude
-            im3 = axes_ch[0, 2].imshow(np.log1p(np.abs(Y)), cmap='inferno', origin='lower')
+            # Row 1, Col 3: Log Magnitude - USE PERCENTILE FOR BETTER CONTRAST
+            log_mag = np.log1p(np.abs(Y))
+            im3 = axes_ch[0, 2].imshow(log_mag, cmap='inferno', origin='lower',
+                                    vmin=np.percentile(log_mag, 1),
+                                    vmax=np.percentile(log_mag, 99))
             axes_ch[0, 2].set_title(f'{channel_name} - Log Magnitude', fontsize=12, fontweight='bold')
             axes_ch[0, 2].axis('off')
             plt.colorbar(im3, ax=axes_ch[0, 2], fraction=0.046, pad=0.04)
@@ -569,14 +571,18 @@ class MDFKTImageAnalyzer:
             # axes_ch[0, 3].axis('off')
             # plt.colorbar(im4, ax=axes_ch[0, 3], fraction=0.046, pad=0.04)
             
-            # Row 2, Col 1: Real Part
-            im5 = axes_ch[1, 0].imshow(Y.real, cmap='viridis', origin='lower')
+            # Row 2, Col 1: Real Part - USE PERCENTILE CLIPPING
+            im5 = axes_ch[1, 0].imshow(Y.real, cmap='viridis', origin='lower',
+                                    vmin=np.percentile(Y.real, 2),
+                                    vmax=np.percentile(Y.real, 98))
             axes_ch[1, 0].set_title(f'{channel_name} - Real Part', fontsize=12, fontweight='bold')
             axes_ch[1, 0].axis('off')
             plt.colorbar(im5, ax=axes_ch[1, 0], fraction=0.046, pad=0.04)
             
-            # Row 2, Col 2: Imaginary Part
-            im6 = axes_ch[1, 1].imshow(Y.imag, cmap='plasma', origin='lower')
+            # Row 2, Col 2: Imaginary Part - USE SYMMETRIC PERCENTILE
+            imag_abs_max = np.percentile(np.abs(Y.imag), 98)
+            im6 = axes_ch[1, 1].imshow(Y.imag, cmap='plasma', origin='lower',
+                                    vmin=-imag_abs_max, vmax=imag_abs_max)
             axes_ch[1, 1].set_title(f'{channel_name} - Imaginary Part', fontsize=12, fontweight='bold')
             axes_ch[1, 1].axis('off')
             plt.colorbar(im6, ax=axes_ch[1, 1], fraction=0.046, pad=0.04)
@@ -868,6 +874,582 @@ class MDFKTImageAnalyzer:
         print("="*80)
         
         return results
+    
+
+    def test_sine_signal_with_lambda_variants(self, output_dir: Optional[str] = None):
+        """
+        Test how different Lambda eigenvalues transform a sine test signal.
+        Uses f(k) = sin(k·π/N) as input signal.
+        Generates SEPARATE plots for each Lambda variant.
+        
+        Args:
+            output_dir: Directory to save plots
+        """
+        k = np.arange(self.N)
+        
+        # Create test signal: sin(k·π/N)
+        test_signal = np.sin(k * np.pi / self.N)
+        
+        print("\n" + "="*80)
+        print("TESTING SINE SIGNAL: f(k) = sin(k·π/N)")
+        print("="*80)
+        print(f"Signal length N = {self.N}")
+        print(f"Signal range: [{test_signal.min():.6f}, {test_signal.max():.6f}]")
+        print(f"First 10 values: {test_signal[:10]}")
+        
+        # Define Lambda variants to test
+        lambda_variants = {
+            'Reciprocal_1_over_k': 1.0 / (k + 1),
+            'Inverse_Reciprocal_1_over_N_minus_k': 1.0 / (self.N - k),
+            'Nth_Roots_of_Unity_plus1': np.exp(1j * 2 * np.pi * k / self.N),
+            'Nth_Roots_of_Unity_minus1': np.exp(1j * np.pi * (2*k + 1) / self.N),
+        }
+        
+        lambda_pretty_names = {
+            'Reciprocal_1_over_k': 'Reciprocal: λₖ = 1/k',
+            'Inverse_Reciprocal_1_over_N_minus_k': 'Inverse Reciprocal: λₖ = 1/(N-k)',
+            'Nth_Roots_of_Unity_plus1': 'N-th Roots of +1: λₖ = exp(i·2πk/N)',
+            'Nth_Roots_of_Unity_minus1': 'N-th Roots of -1: λₖ = exp(i·π(2k+1)/N)',
+        }
+        
+        results = {}
+        
+        if output_dir:
+            Path(output_dir).mkdir(parents=True, exist_ok=True)
+        
+        for lambda_key, Lambda in lambda_variants.items():
+            lambda_name = lambda_pretty_names[lambda_key]
+            print(f"\n{'='*80}")
+            print(f"Processing: {lambda_name}")
+            print(f"{'='*80}")
+            
+            transformed = Lambda * (self.K0 @ test_signal)
+            
+            real_part = np.real(transformed)
+            imag_part = np.imag(transformed)
+            magnitude = np.abs(transformed)
+            phase = np.angle(transformed)
+            
+            is_lambda_real = not np.iscomplexobj(Lambda)
+            is_transformed_real = np.allclose(imag_part, 0, atol=1e-10)
+            
+            results[lambda_key] = {
+                'lambda': Lambda,
+                'transformed': transformed,
+                'real': real_part,
+                'imag': imag_part,
+                'magnitude': magnitude,
+                'phase': phase,
+                'is_real': is_transformed_real
+            }
+            
+            print(f"Lambda Type: {'Real' if is_lambda_real else 'Complex'}")
+            print(f"Transformed Output: {'Real' if is_transformed_real else 'Complex'}")
+            print(f"Transform Statistics:")
+            print(f"  Real range: [{real_part.min():.6f}, {real_part.max():.6f}]")
+            print(f"  Imag range: [{imag_part.min():.6f}, {imag_part.max():.6f}]")
+            print(f"  Magnitude range: [{magnitude.min():.6f}, {magnitude.max():.6f}]")
+            print(f"  Energy: {np.sum(magnitude**2):.6f}")
+            
+            if is_transformed_real:
+                fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+                fig.suptitle(f'{lambda_name}\nTest Signal: f(k) = sin(k·π/N), N={self.N}', 
+                            fontsize=14, fontweight='bold')
+                
+                axes[0, 0].plot(k, test_signal, 'k-', linewidth=2.5)
+                axes[0, 0].scatter(k, test_signal, c='black', s=30, alpha=0.6, zorder=3)
+                axes[0, 0].axhline(y=0, color='gray', linestyle='--', alpha=0.5)
+                axes[0, 0].set_xlabel('k', fontsize=11)
+                axes[0, 0].set_ylabel('Amplitude', fontsize=11)
+                axes[0, 0].set_title('Input: f(k) = sin(k·π/N)', fontsize=12, fontweight='bold')
+                axes[0, 0].grid(True, alpha=0.3)
+                
+                axes[0, 1].plot(k, real_part, 'purple', linewidth=2.5)
+                axes[0, 1].scatter(k, real_part, c='purple', s=30, alpha=0.6, zorder=3)
+                axes[0, 1].axhline(y=0, color='gray', linestyle='--', alpha=0.5)
+                axes[0, 1].fill_between(k, 0, real_part, alpha=0.2, color='purple')
+                axes[0, 1].set_xlabel('k', fontsize=11)
+                axes[0, 1].set_ylabel('Amplitude', fontsize=11)
+                axes[0, 1].set_title('Transformed: Y[k]', fontsize=12, fontweight='bold')
+                axes[0, 1].grid(True, alpha=0.3)
+                
+                axes[0, 2].plot(k, magnitude, 'g-', linewidth=2.5)
+                axes[0, 2].scatter(k, magnitude, c='green', s=30, alpha=0.6, zorder=3)
+                axes[0, 2].fill_between(k, 0, magnitude, alpha=0.2, color='green')
+                axes[0, 2].set_xlabel('k', fontsize=11)
+                axes[0, 2].set_ylabel('Magnitude', fontsize=11)
+                axes[0, 2].set_title('Magnitude: |Y[k]|', fontsize=12, fontweight='bold')
+                axes[0, 2].grid(True, alpha=0.3)
+                
+                axes[1, 0].plot(k, real_part, 'b-', linewidth=2.5)
+                axes[1, 0].scatter(k, real_part, c='blue', s=30, alpha=0.6, zorder=3)
+                axes[1, 0].axhline(y=0, color='gray', linestyle='--', alpha=0.5)
+                axes[1, 0].fill_between(k, 0, real_part, alpha=0.2, color='blue')
+                axes[1, 0].set_xlabel('k', fontsize=11)
+                axes[1, 0].set_ylabel('Real Part', fontsize=11)
+                axes[1, 0].set_title('Real Part: Re{Y[k]}', fontsize=12, fontweight='bold')
+                axes[1, 0].grid(True, alpha=0.3)
+                
+                axes[1, 1].plot(k, imag_part, 'r-', linewidth=2.5)
+                axes[1, 1].scatter(k, imag_part, c='red', s=30, alpha=0.6, zorder=3)
+                axes[1, 1].axhline(y=0, color='gray', linestyle='--', alpha=0.5)
+                axes[1, 1].set_xlabel('k', fontsize=11)
+                axes[1, 1].set_ylabel('Imaginary Part', fontsize=11)
+                axes[1, 1].set_title('Imaginary: Im{Y[k]} (≈0)', fontsize=12, fontweight='bold')
+                axes[1, 1].grid(True, alpha=0.3)
+                axes[1, 1].set_ylim([-0.1, 0.1])
+                
+                axes[1, 2].plot(k, phase, 'm-', linewidth=2.5)
+                axes[1, 2].scatter(k, phase, c='magenta', s=30, alpha=0.6, zorder=3)
+                axes[1, 2].axhline(y=0, color='gray', linestyle='--', alpha=0.5)
+                axes[1, 2].set_xlabel('k', fontsize=11)
+                axes[1, 2].set_ylabel('Phase (radians)', fontsize=11)
+                axes[1, 2].set_title('Phase: ∠Y[k]', fontsize=12, fontweight='bold')
+                axes[1, 2].grid(True, alpha=0.3)
+                axes[1, 2].set_ylim([-np.pi - 0.5, np.pi + 0.5])
+            else:
+                fig = plt.figure(figsize=(18, 12))
+                fig.suptitle(f'{lambda_name}\nTest Signal: f(k) = sin(k·π/N), N={self.N}', 
+                            fontsize=14, fontweight='bold')
+                
+                gs = fig.add_gridspec(2, 3, hspace=0.3, wspace=0.3)
+                
+                ax1 = fig.add_subplot(gs[0, 0])
+                ax1.plot(k, test_signal, 'k-', linewidth=2.5)
+                ax1.scatter(k, test_signal, c='black', s=30, alpha=0.6, zorder=3)
+                ax1.axhline(y=0, color='gray', linestyle='--', alpha=0.5)
+                ax1.set_xlabel('k', fontsize=11)
+                ax1.set_ylabel('Amplitude', fontsize=11)
+                ax1.set_title('Input: f(k) = sin(k·π/N)', fontsize=12, fontweight='bold')
+                ax1.grid(True, alpha=0.3)
+                
+                ax2 = fig.add_subplot(gs[0, 1:])
+                ax2.plot(k, magnitude, 'g-', linewidth=2.5)
+                ax2.scatter(k, magnitude, c='green', s=30, alpha=0.6, zorder=3)
+                ax2.fill_between(k, 0, magnitude, alpha=0.2, color='green')
+                ax2.set_xlabel('k', fontsize=11)
+                ax2.set_ylabel('Magnitude', fontsize=11)
+                ax2.set_title('Magnitude: |Y[k]|', fontsize=12, fontweight='bold')
+                ax2.grid(True, alpha=0.3)
+                
+                ax3 = fig.add_subplot(gs[1, 0])
+                ax3.plot(k, real_part, 'b-', linewidth=2.5)
+                ax3.scatter(k, real_part, c='blue', s=30, alpha=0.6, zorder=3)
+                ax3.axhline(y=0, color='gray', linestyle='--', alpha=0.5)
+                ax3.fill_between(k, 0, real_part, alpha=0.2, color='blue')
+                ax3.set_xlabel('k', fontsize=11)
+                ax3.set_ylabel('Real Part', fontsize=11)
+                ax3.set_title('Real: Re{Y[k]}', fontsize=12, fontweight='bold')
+                ax3.grid(True, alpha=0.3)
+                
+                ax4 = fig.add_subplot(gs[1, 1])
+                ax4.plot(k, imag_part, 'r-', linewidth=2.5)
+                ax4.scatter(k, imag_part, c='red', s=30, alpha=0.6, zorder=3)
+                ax4.axhline(y=0, color='gray', linestyle='--', alpha=0.5)
+                ax4.fill_between(k, 0, imag_part, alpha=0.2, color='red')
+                ax4.set_xlabel('k', fontsize=11)
+                ax4.set_ylabel('Imaginary Part', fontsize=11)
+                ax4.set_title('Imaginary: Im{Y[k]}', fontsize=12, fontweight='bold')
+                ax4.grid(True, alpha=0.3)
+                
+                ax5 = fig.add_subplot(gs[1, 2])
+                ax5.plot(k, phase, 'm-', linewidth=2.5)
+                ax5.scatter(k, phase, c='magenta', s=30, alpha=0.6, zorder=3)
+                ax5.axhline(y=0, color='gray', linestyle='--', alpha=0.5)
+                ax5.set_xlabel('k', fontsize=11)
+                ax5.set_ylabel('Phase (radians)', fontsize=11)
+                ax5.set_title('Phase: ∠Y[k]', fontsize=12, fontweight='bold')
+                ax5.grid(True, alpha=0.3)
+                ax5.set_ylim([-np.pi - 0.5, np.pi + 0.5])
+            
+            plt.tight_layout(rect=[0, 0, 1, 0.96])
+            
+            if output_dir:
+                output_path = Path(output_dir) / f"sine_test_{lambda_key}_N{self.N}.png"
+                plt.savefig(output_path, dpi=300, bbox_inches='tight', facecolor='white')
+                print(f"✓ Saved: {output_path.name}")
+            
+            plt.show()
+            plt.close()
+        
+        print("\n" + "="*80)
+        print("SUMMARY - SINE SIGNAL ENERGY COMPARISON")
+        print("="*80)
+        for lambda_key, res in results.items():
+            energy = np.sum(res['magnitude']**2)
+            signal_type = 'Real' if res['is_real'] else 'Complex'
+            print(f"{lambda_pretty_names[lambda_key]:<45} | {signal_type:>10} | Energy: {energy:>12.4f}")
+        print("="*80)
+        
+        return results
+
+    def test_reciprocal_signal_with_lambda_variants(self, output_dir: Optional[str] = None):
+        """
+        Test how different Lambda eigenvalues transform a reciprocal test signal.
+        Uses f(k) = 1/(k+1) as input signal (shifted to avoid division by zero).
+        Generates SEPARATE plots for each Lambda variant.
+        
+        Args:
+            output_dir: Directory to save plots
+        """
+        k = np.arange(self.N)
+        
+        # Create test signal: 1/(k+1) to avoid division by zero
+        test_signal = 1.0 / (k + 1)
+        
+        print("\n" + "="*80)
+        print("TESTING RECIPROCAL SIGNAL: f(k) = 1/(k+1)")
+        print("="*80)
+        print(f"Signal length N = {self.N}")
+        print(f"Signal range: [{test_signal.min():.6f}, {test_signal.max():.6f}]")
+        print(f"First 10 values: {test_signal[:10]}")
+        
+        lambda_variants = {
+            'Reciprocal_1_over_k': 1.0 / (k + 1),
+            'Inverse_Reciprocal_1_over_N_minus_k': 1.0 / (self.N - k),
+            'Nth_Roots_of_Unity_plus1': np.exp(1j * 2 * np.pi * k / self.N),
+            'Nth_Roots_of_Unity_minus1': np.exp(1j * np.pi * (2*k + 1) / self.N),
+        }
+        
+        lambda_pretty_names = {
+            'Reciprocal_1_over_k': 'Reciprocal: λₖ = 1/k',
+            'Inverse_Reciprocal_1_over_N_minus_k': 'Inverse Reciprocal: λₖ = 1/(N-k)',
+            'Nth_Roots_of_Unity_plus1': 'N-th Roots of +1: λₖ = exp(i·2πk/N)',
+            'Nth_Roots_of_Unity_minus1': 'N-th Roots of -1: λₖ = exp(i·π(2k+1)/N)',
+        }
+        
+        results = {}
+        
+        if output_dir:
+            Path(output_dir).mkdir(parents=True, exist_ok=True)
+        
+        for lambda_key, Lambda in lambda_variants.items():
+            lambda_name = lambda_pretty_names[lambda_key]
+            print(f"\n{'='*80}")
+            print(f"Processing: {lambda_name}")
+            print(f"{'='*80}")
+            
+            transformed = Lambda * (self.K0 @ test_signal)
+            
+            real_part = np.real(transformed)
+            imag_part = np.imag(transformed)
+            magnitude = np.abs(transformed)
+            phase = np.angle(transformed)
+            
+            is_lambda_real = not np.iscomplexobj(Lambda)
+            is_transformed_real = np.allclose(imag_part, 0, atol=1e-10)
+            
+            results[lambda_key] = {
+                'lambda': Lambda,
+                'transformed': transformed,
+                'real': real_part,
+                'imag': imag_part,
+                'magnitude': magnitude,
+                'phase': phase,
+                'is_real': is_transformed_real
+            }
+            
+            print(f"Lambda Type: {'Real' if is_lambda_real else 'Complex'}")
+            print(f"Transformed Output: {'Real' if is_transformed_real else 'Complex'}")
+            print(f"Transform Statistics:")
+            print(f"  Real range: [{real_part.min():.6f}, {real_part.max():.6f}]")
+            print(f"  Imag range: [{imag_part.min():.6f}, {imag_part.max():.6f}]")
+            print(f"  Magnitude range: [{magnitude.min():.6f}, {magnitude.max():.6f}]")
+            print(f"  Energy: {np.sum(magnitude**2):.6f}")
+            
+            if is_transformed_real:
+                fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+                fig.suptitle(f'{lambda_name}\nTest Signal: f(k) = 1/(k+1), N={self.N}', 
+                            fontsize=14, fontweight='bold')
+                
+                axes[0, 0].plot(k, test_signal, 'k-', linewidth=2.5)
+                axes[0, 0].scatter(k, test_signal, c='black', s=30, alpha=0.6, zorder=3)
+                axes[0, 0].set_xlabel('k', fontsize=11)
+                axes[0, 0].set_ylabel('Amplitude', fontsize=11)
+                axes[0, 0].set_title('Input: f(k) = 1/(k+1)', fontsize=12, fontweight='bold')
+                axes[0, 0].grid(True, alpha=0.3)
+                
+                axes[0, 1].plot(k, real_part, 'purple', linewidth=2.5)
+                axes[0, 1].scatter(k, real_part, c='purple', s=30, alpha=0.6, zorder=3)
+                axes[0, 1].axhline(y=0, color='gray', linestyle='--', alpha=0.5)
+                axes[0, 1].fill_between(k, 0, real_part, alpha=0.2, color='purple')
+                axes[0, 1].set_xlabel('k', fontsize=11)
+                axes[0, 1].set_ylabel('Amplitude', fontsize=11)
+                axes[0, 1].set_title('Transformed: Y[k]', fontsize=12, fontweight='bold')
+                axes[0, 1].grid(True, alpha=0.3)
+                
+                axes[0, 2].plot(k, magnitude, 'g-', linewidth=2.5)
+                axes[0, 2].scatter(k, magnitude, c='green', s=30, alpha=0.6, zorder=3)
+                axes[0, 2].fill_between(k, 0, magnitude, alpha=0.2, color='green')
+                axes[0, 2].set_xlabel('k', fontsize=11)
+                axes[0, 2].set_ylabel('Magnitude', fontsize=11)
+                axes[0, 2].set_title('Magnitude: |Y[k]|', fontsize=12, fontweight='bold')
+                axes[0, 2].grid(True, alpha=0.3)
+                
+                axes[1, 0].plot(k, real_part, 'b-', linewidth=2.5)
+                axes[1, 0].scatter(k, real_part, c='blue', s=30, alpha=0.6, zorder=3)
+                axes[1, 0].axhline(y=0, color='gray', linestyle='--', alpha=0.5)
+                axes[1, 0].fill_between(k, 0, real_part, alpha=0.2, color='blue')
+                axes[1, 0].set_xlabel('k', fontsize=11)
+                axes[1, 0].set_ylabel('Real Part', fontsize=11)
+                axes[1, 0].set_title('Real Part: Re{Y[k]}', fontsize=12, fontweight='bold')
+                axes[1, 0].grid(True, alpha=0.3)
+                
+                axes[1, 1].plot(k, imag_part, 'r-', linewidth=2.5)
+                axes[1, 1].scatter(k, imag_part, c='red', s=30, alpha=0.6, zorder=3)
+                axes[1, 1].axhline(y=0, color='gray', linestyle='--', alpha=0.5)
+                axes[1, 1].set_xlabel('k', fontsize=11)
+                axes[1, 1].set_ylabel('Imaginary Part', fontsize=11)
+                axes[1, 1].set_title('Imaginary: Im{Y[k]} (≈0)', fontsize=12, fontweight='bold')
+                axes[1, 1].grid(True, alpha=0.3)
+                axes[1, 1].set_ylim([-0.1, 0.1])
+                
+                axes[1, 2].plot(k, phase, 'm-', linewidth=2.5)
+                axes[1, 2].scatter(k, phase, c='magenta', s=30, alpha=0.6, zorder=3)
+                axes[1, 2].axhline(y=0, color='gray', linestyle='--', alpha=0.5)
+                axes[1, 2].set_xlabel('k', fontsize=11)
+                axes[1, 2].set_ylabel('Phase (radians)', fontsize=11)
+                axes[1, 2].set_title('Phase: ∠Y[k]', fontsize=12, fontweight='bold')
+                axes[1, 2].grid(True, alpha=0.3)
+                axes[1, 2].set_ylim([-np.pi - 0.5, np.pi + 0.5])
+            else:
+                fig = plt.figure(figsize=(18, 12))
+                fig.suptitle(f'{lambda_name}\nTest Signal: f(k) = 1/(k+1), N={self.N}', 
+                            fontsize=14, fontweight='bold')
+                
+                gs = fig.add_gridspec(2, 3, hspace=0.3, wspace=0.3)
+                
+                ax1 = fig.add_subplot(gs[0, 0])
+                ax1.plot(k, test_signal, 'k-', linewidth=2.5)
+                ax1.scatter(k, test_signal, c='black', s=30, alpha=0.6, zorder=3)
+                ax1.set_xlabel('k', fontsize=11)
+                ax1.set_ylabel('Amplitude', fontsize=11)
+                ax1.set_title('Input: f(k) = 1/(k+1)', fontsize=12, fontweight='bold')
+                ax1.grid(True, alpha=0.3)
+                
+                ax2 = fig.add_subplot(gs[0, 1:])
+                ax2.plot(k, magnitude, 'g-', linewidth=2.5)
+                ax2.scatter(k, magnitude, c='green', s=30, alpha=0.6, zorder=3)
+                ax2.fill_between(k, 0, magnitude, alpha=0.2, color='green')
+                ax2.set_xlabel('k', fontsize=11)
+                ax2.set_ylabel('Magnitude', fontsize=11)
+                ax2.set_title('Magnitude: |Y[k]|', fontsize=12, fontweight='bold')
+                ax2.grid(True, alpha=0.3)
+                
+                ax3 = fig.add_subplot(gs[1, 0])
+                ax3.plot(k, real_part, 'b-', linewidth=2.5)
+                ax3.scatter(k, real_part, c='blue', s=30, alpha=0.6, zorder=3)
+                ax3.axhline(y=0, color='gray', linestyle='--', alpha=0.5)
+                ax3.fill_between(k, 0, real_part, alpha=0.2, color='blue')
+                ax3.set_xlabel('k', fontsize=11)
+                ax3.set_ylabel('Real Part', fontsize=11)
+                ax3.set_title('Real: Re{Y[k]}', fontsize=12, fontweight='bold')
+                ax3.grid(True, alpha=0.3)
+                
+                ax4 = fig.add_subplot(gs[1, 1])
+                ax4.plot(k, imag_part, 'r-', linewidth=2.5)
+                ax4.scatter(k, imag_part, c='red', s=30, alpha=0.6, zorder=3)
+                ax4.axhline(y=0, color='gray', linestyle='--', alpha=0.5)
+                ax4.fill_between(k, 0, imag_part, alpha=0.2, color='red')
+                ax4.set_xlabel('k', fontsize=11)
+                ax4.set_ylabel('Imaginary Part', fontsize=11)
+                ax4.set_title('Imaginary: Im{Y[k]}', fontsize=12, fontweight='bold')
+                ax4.grid(True, alpha=0.3)
+                
+                ax5 = fig.add_subplot(gs[1, 2])
+                ax5.plot(k, phase, 'm-', linewidth=2.5)
+                ax5.scatter(k, phase, c='magenta', s=30, alpha=0.6, zorder=3)
+                ax5.axhline(y=0, color='gray', linestyle='--', alpha=0.5)
+                ax5.set_xlabel('k', fontsize=11)
+                ax5.set_ylabel('Phase (radians)', fontsize=11)
+                ax5.set_title('Phase: ∠Y[k]', fontsize=12, fontweight='bold')
+                ax5.grid(True, alpha=0.3)
+                ax5.set_ylim([-np.pi - 0.5, np.pi + 0.5])
+            
+            plt.tight_layout(rect=[0, 0, 1, 0.96])
+            
+            if output_dir:
+                output_path = Path(output_dir) / f"reciprocal_test_{lambda_key}_N{self.N}.png"
+                plt.savefig(output_path, dpi=300, bbox_inches='tight', facecolor='white')
+                print(f"✓ Saved: {output_path.name}")
+            
+            plt.show()
+            plt.close()
+        
+        print("\n" + "="*80)
+        print("SUMMARY - RECIPROCAL SIGNAL ENERGY COMPARISON")
+        print("="*80)
+        for lambda_key, res in results.items():
+            energy = np.sum(res['magnitude']**2)
+            signal_type = 'Real' if res['is_real'] else 'Complex'
+            print(f"{lambda_pretty_names[lambda_key]:<45} | {signal_type:>10} | Energy: {energy:>12.4f}")
+        print("="*80)
+        
+        return results
+
+
+    def test_complex_exponential_signal_with_lambda_variants(self, output_dir: Optional[str] = None):
+        """
+        Test how different Lambda eigenvalues transform a complex exponential signal.
+        Uses f(k) = exp(i·k·π/N) as input signal.
+        Generates SEPARATE plots for each Lambda variant.
+        
+        Args:
+            output_dir: Directory to save plots
+        """
+        k = np.arange(self.N)
+        
+        # Create test signal: exp(i·k·π/N)
+        test_signal = np.exp(1j * k * np.pi / self.N)
+        
+        print("\n" + "="*80)
+        print("TESTING COMPLEX EXPONENTIAL SIGNAL: f(k) = exp(i·k·π/N)")
+        print("="*80)
+        print(f"Signal length N = {self.N}")
+        print(f"Signal type: Complex")
+        print(f"Magnitude range: [{np.abs(test_signal).min():.6f}, {np.abs(test_signal).max():.6f}]")
+        print(f"First 5 values: {test_signal[:5]}")
+        
+        lambda_variants = {
+            'Reciprocal_1_over_k': 1.0 / (k + 1),
+            'Inverse_Reciprocal_1_over_N_minus_k': 1.0 / (self.N - k),
+            'Nth_Roots_of_Unity_plus1': np.exp(1j * 2 * np.pi * k / self.N),
+            'Nth_Roots_of_Unity_minus1': np.exp(1j * np.pi * (2*k + 1) / self.N),
+        }
+        
+        lambda_pretty_names = {
+            'Reciprocal_1_over_k': 'Reciprocal: λₖ = 1/k',
+            'Inverse_Reciprocal_1_over_N_minus_k': 'Inverse Reciprocal: λₖ = 1/(N-k)',
+            'Nth_Roots_of_Unity_plus1': 'N-th Roots of +1: λₖ = exp(i·2πk/N)',
+            'Nth_Roots_of_Unity_minus1': 'N-th Roots of -1: λₖ = exp(i·π(2k+1)/N)',
+        }
+        
+        results = {}
+        
+        if output_dir:
+            Path(output_dir).mkdir(parents=True, exist_ok=True)
+        
+        for lambda_key, Lambda in lambda_variants.items():
+            lambda_name = lambda_pretty_names[lambda_key]
+            print(f"\n{'='*80}")
+            print(f"Processing: {lambda_name}")
+            print(f"{'='*80}")
+            
+            transformed = Lambda * (self.K0 @ test_signal)
+            
+            real_part = np.real(transformed)
+            imag_part = np.imag(transformed)
+            magnitude = np.abs(transformed)
+            phase = np.angle(transformed)
+            
+            is_lambda_real = not np.iscomplexobj(Lambda)
+            is_transformed_real = np.allclose(imag_part, 0, atol=1e-10)
+            
+            results[lambda_key] = {
+                'lambda': Lambda,
+                'transformed': transformed,
+                'real': real_part,
+                'imag': imag_part,
+                'magnitude': magnitude,
+                'phase': phase,
+                'is_real': is_transformed_real
+            }
+            
+            print(f"Lambda Type: {'Real' if is_lambda_real else 'Complex'}")
+            print(f"Transformed Output: {'Real' if is_transformed_real else 'Complex'}")
+            print(f"Transform Statistics:")
+            print(f"  Real range: [{real_part.min():.6f}, {real_part.max():.6f}]")
+            print(f"  Imag range: [{imag_part.min():.6f}, {imag_part.max():.6f}]")
+            print(f"  Magnitude range: [{magnitude.min():.6f}, {magnitude.max():.6f}]")
+            print(f"  Energy: {np.sum(magnitude**2):.6f}")
+            
+            # Always use complex layout since input is complex
+            fig = plt.figure(figsize=(18, 12))
+            fig.suptitle(f'{lambda_name}\nTest Signal: f(k) = exp(i·k·π/N), N={self.N}', 
+                        fontsize=14, fontweight='bold')
+            
+            gs = fig.add_gridspec(2, 3, hspace=0.3, wspace=0.3)
+            
+            # Plot 1: Input Signal Magnitude
+            ax1 = fig.add_subplot(gs[0, 0])
+            ax1.plot(k, np.abs(test_signal), 'k-', linewidth=2.5, label='|f(k)|')
+            ax1.scatter(k, np.abs(test_signal), c='black', s=30, alpha=0.6, zorder=3)
+            ax1.set_xlabel('k', fontsize=11)
+            ax1.set_ylabel('Magnitude', fontsize=11)
+            ax1.set_title('Input Magnitude: |f(k)| = 1', fontsize=12, fontweight='bold')
+            ax1.grid(True, alpha=0.3)
+            ax1.legend(fontsize=10)
+            
+            # Plot 2: Output Magnitude
+            ax2 = fig.add_subplot(gs[0, 1:])
+            ax2.plot(k, magnitude, 'g-', linewidth=2.5, label='|Y[k]|')
+            ax2.scatter(k, magnitude, c='green', s=30, alpha=0.6, zorder=3)
+            ax2.fill_between(k, 0, magnitude, alpha=0.2, color='green')
+            ax2.set_xlabel('k', fontsize=11)
+            ax2.set_ylabel('Magnitude', fontsize=11)
+            ax2.set_title('Output Magnitude: |Y[k]|', fontsize=12, fontweight='bold')
+            ax2.grid(True, alpha=0.3)
+            ax2.legend(fontsize=10)
+            
+            # Plot 3: Real Part
+            ax3 = fig.add_subplot(gs[1, 0])
+            ax3.plot(k, real_part, 'b-', linewidth=2.5, label='Re{Y[k]}')
+            ax3.scatter(k, real_part, c='blue', s=30, alpha=0.6, zorder=3)
+            ax3.axhline(y=0, color='gray', linestyle='--', alpha=0.5)
+            ax3.fill_between(k, 0, real_part, alpha=0.2, color='blue')
+            ax3.set_xlabel('k', fontsize=11)
+            ax3.set_ylabel('Real Part', fontsize=11)
+            ax3.set_title('Real: Re{Y[k]}', fontsize=12, fontweight='bold')
+            ax3.grid(True, alpha=0.3)
+            ax3.legend(fontsize=10)
+            
+            # Plot 4: Imaginary Part
+            ax4 = fig.add_subplot(gs[1, 1])
+            ax4.plot(k, imag_part, 'r-', linewidth=2.5, label='Im{Y[k]}')
+            ax4.scatter(k, imag_part, c='red', s=30, alpha=0.6, zorder=3)
+            ax4.axhline(y=0, color='gray', linestyle='--', alpha=0.5)
+            ax4.fill_between(k, 0, imag_part, alpha=0.2, color='red')
+            ax4.set_xlabel('k', fontsize=11)
+            ax4.set_ylabel('Imaginary Part', fontsize=11)
+            ax4.set_title('Imaginary: Im{Y[k]}', fontsize=12, fontweight='bold')
+            ax4.grid(True, alpha=0.3)
+            ax4.legend(fontsize=10)
+            
+            # Plot 5: Phase
+            ax5 = fig.add_subplot(gs[1, 2])
+            ax5.plot(k, phase, 'm-', linewidth=2.5, label='∠Y[k]')
+            ax5.scatter(k, phase, c='magenta', s=30, alpha=0.6, zorder=3)
+            ax5.axhline(y=0, color='gray', linestyle='--', alpha=0.5)
+            ax5.axhline(y=np.pi, color='gray', linestyle=':', alpha=0.5)
+            ax5.axhline(y=-np.pi, color='gray', linestyle=':', alpha=0.5)
+            ax5.set_xlabel('k', fontsize=11)
+            ax5.set_ylabel('Phase (radians)', fontsize=11)
+            ax5.set_title('Phase: ∠Y[k]', fontsize=12, fontweight='bold')
+            ax5.grid(True, alpha=0.3)
+            ax5.legend(fontsize=10)
+            ax5.set_ylim([-np.pi - 0.5, np.pi + 0.5])
+            
+            plt.tight_layout(rect=[0, 0, 1, 0.96])
+            
+            if output_dir:
+                output_path = Path(output_dir) / f"complex_exp_test_{lambda_key}_N{self.N}.png"
+                plt.savefig(output_path, dpi=300, bbox_inches='tight', facecolor='white')
+                print(f"✓ Saved: {output_path.name}")
+            
+            plt.show()
+            plt.close()
+        
+        print("\n" + "="*80)
+        print("SUMMARY - COMPLEX EXPONENTIAL ENERGY COMPARISON")
+        print("="*80)
+        for lambda_key, res in results.items():
+            energy = np.sum(res['magnitude']**2)
+            signal_type = 'Real' if res['is_real'] else 'Complex'
+            print(f"{lambda_pretty_names[lambda_key]:<45} | {signal_type:>10} | Energy: {energy:>12.4f}")
+        print("="*80)
+        
+        return results
+
 # -------------------------
 # Example usage
 # -------------------------
@@ -875,14 +1457,26 @@ if __name__ == "__main__":
     # Initialize analyzer
     analyzer = MDFKTImageAnalyzer(N=64, p=0.5)
     
+
     # Analyze a bcc/bkl image
     image_path = "ISIC_0024885_segmented_original.png"  
 
-    # Test cosine signal with different Lambda variants
-    print("\n" + "="*70)
-    print("TESTING: f(k) = cos(π·k/N) with Different Lambda Eigenvalues")
-    print("="*70)
-    results = analyzer.test_cosine_signal_with_lambda_variants(output_dir="mdfkt_results")
+    """
+    # # Test cosine signal with different Lambda variants
+    # print("\n" + "="*70)
+    # print("TESTING: f(k) = cos(π·k/N) with Different Lambda Eigenvalues")
+    # print("="*70)
+    #results = analyzer.test_cosine_signal_with_lambda_variants(output_dir="mdfkt_cos_results")
+
+    #results = analyzer.test_sine_signal_with_lambda_variants(output_dir="mdfkt_sin_results")
+
+    #results = analyzer.test_reciprocal_signal_with_lambda_variants(output_dir="mdfkt_reciprocal_results")
+
+    #results = analyzer.test_complex_exponential_signal_with_lambda_variants(output_dir="mdfkt_complex_exp_results")
+
+
+
+
     
     """
     print("\n" + "="*70)
@@ -911,4 +1505,3 @@ if __name__ == "__main__":
         import traceback
         traceback.print_exc()
 
-    """
