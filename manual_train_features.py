@@ -50,85 +50,201 @@ from lightgbm import LGBMClassifier
 from sklearn.ensemble import ExtraTreesClassifier
 from sklearn.svm import LinearSVC
 from sklearn.calibration import CalibratedClassifierCV
+
+# Dictionary of available classifiers
+# ...existing imports...
+
 # Dictionary of available classifiers
 CLASSIFIERS = {
-    'SVM (RBF)': {
-        'class': SVC,
-        'params': {'kernel': 'rbf', 'C': 50.0, 'gamma': 'auto', 'probability': True, 'random_state': 42}
-    },
-    'SVM (Linear)': {
-        'class': SVC,
-        'params': {'kernel': 'linear', 'C': 1.0, 'probability': True, 'random_state': 42}
-    },
-    'RF': {
-        'class': RandomForestClassifier,
-        'params': {'n_estimators': 100, 'max_depth': 10, 'random_state': 42}
-    },
-    'MLP': {
-        'class': MLPClassifier,
-        'params': {'hidden_layer_sizes': (256, 128, 64), 'activation': 'relu', 'solver': 'adam', 'alpha': 0.0001,
-                 'learning_rate': 'adaptive', 'max_iter': 1000, 'random_state': 42, 'early_stopping': True}
-    },
-    'Gradient Boosting': {
-        'class': GradientBoostingClassifier,
-        'params': {'n_estimators': 500, 'learning_rate': 0.1, 'max_depth': 3, 'random_state': 42}
-    },
-    'Logistic Regression': {
-        'class': CalibratedClassifierCV,  # Wrapper for better stability
+    'CatBoost': {
+        'class': CatBoostClassifier,
         'params': {
-            'estimator': LogisticRegression(
-                max_iter=3000,
-                solver='lbfgs',
-                C=1.0,
-                tol=1e-3,  # Less strict tolerance to prevent over-iteration
-                random_state=42
-            ),
-            'method': 'sigmoid',  # Platt scaling for calibration
-            'cv': 3,  # Internal cross-validation
-            'n_jobs': -1
+            'iterations': 1000,
+            'depth': 8,
+            'learning_rate': 0.05,
+            'l2_leaf_reg': 5,
+            'random_strength': 1.5,
+            'bagging_temperature': 1.0,
+            'border_count': 128,
+            'random_state': 42,
+            'verbose': 0,
+            'early_stopping_rounds': 50,
+            'task_type': 'CPU',
+            'eval_metric': 'F1'
+        }
+    },
+    'LightGBM': {
+        'class': LGBMClassifier,
+        'params': {
+            'n_estimators': 1000,
+            'learning_rate': 0.05,
+            'num_leaves': 63,
+            'max_depth': 8,
+            'min_child_samples': 20,
+            'subsample': 0.8,
+            'colsample_bytree': 0.8,
+            'reg_alpha': 0.1,
+            'reg_lambda': 0.1,
+            'random_state': 42,
+            'verbose': -1,
+            'force_col_wise': True,
+            'feature_pre_filter': False
         }
     },
     'XGBoost': {
         'class': XGBClassifier,
-        'params': {'n_estimators': 100, 'random_state': 42, 'base_score': 0.5, 'eval_metric': 'logloss'}
-    },
-    'CatBoost': {
-        'class': CatBoostClassifier,
-        'params': {'verbose': False, 'random_state': 42, 'iterations': 200, 'learning_rate': 0.1, 'depth': 6}
-    },
-    "LightGBM": {
-        "class": LGBMClassifier,
-        "params": {
-            "num_leaves": 127,  # Increased from 63 to prevent overfitting on small feature subsets
-            "n_estimators": 800,
-            "learning_rate": 0.03,
-            "min_child_samples": 30,  # Increased from 20 to require more samples per leaf
-            "colsample_bytree": 0.7,  # Reduced from 0.8 to use fewer features per tree
-            "subsample": 0.85,
-            "reg_alpha": 0.5,  # Increased from 0.1 for stronger regularization
-            "reg_lambda": 2.0,  # Increased from 1.0 for stronger regularization
-            "min_split_gain": 0.01,  # NEW: require minimum gain for splits
-            "min_child_weight": 0.001,  # NEW: minimum sum of instance weight in a child
-            "class_weight": "balanced",
-            "random_state": 42,
-            "n_jobs": -1,
-            "verbosity": -1,  # NEW: suppress warnings
-            "force_col_wise": True,
-            "feature_pre_filter": False
+        'params': {
+            'n_estimators': 800,
+            'max_depth': 7,
+            'learning_rate': 0.05,
+            'subsample': 0.85,
+            'colsample_bytree': 0.85,
+            'gamma': 0.2,
+            'min_child_weight': 3,
+            'reg_alpha': 0.1,
+            'reg_lambda': 1.0,
+            'random_state': 42,
+            'eval_metric': 'logloss',
+            'enable_categorical': False,
+            'tree_method': 'hist'
         }
     },
-    "Extra Trees": {
-        "class": ExtraTreesClassifier,
-        "params": {
-            "n_estimators": 400,
-            "max_depth": 20,
-            "min_samples_split": 4,
-            "min_samples_leaf": 2,
-            "max_features": "sqrt",
-            "bootstrap": True,
-            "class_weight": "balanced",
-            "random_state": 42,
-            "n_jobs": -1
+    'Extra Trees': {
+        'class': ExtraTreesClassifier,
+        'params': {
+            'n_estimators': 500,
+            'max_depth': 25,
+            'min_samples_split': 3,
+            'min_samples_leaf': 1,
+            'max_features': 'sqrt',
+            'bootstrap': True,
+            'class_weight': 'balanced',
+            'random_state': 42,
+            'n_jobs': -1
+        }
+    },
+    'RF': {
+        'class': RandomForestClassifier,
+        'params': {
+            'n_estimators': 500,
+            'max_depth': 25,
+            'min_samples_split': 3,
+            'min_samples_leaf': 1,
+            'max_features': 'sqrt',
+            'class_weight': 'balanced',
+            'random_state': 42,
+            'n_jobs': -1
+        }
+    },
+    'SVM (RBF)': {
+        'class': SVC,
+        'params': {
+            'C': 100,
+            'kernel': 'rbf',
+            'gamma': 'scale',
+            'class_weight': 'balanced',
+            'cache_size': 1000,
+            'probability': True,  # Enable probability estimates for ROC curves
+            'random_state': 42
+        }
+    },
+    'SVM (Linear)': {
+        'class': LinearSVC,
+        'params': {
+            'C': 10,
+            'class_weight': 'balanced',
+            'max_iter': 5000,
+            'dual': False,
+            'random_state': 42
+        }
+    },
+    'SVM (Sigmoid)': {
+        'class': SVC,
+        'params': {
+            'C': 50,
+            'kernel': 'sigmoid',
+            'gamma': 'scale',
+            'class_weight': 'balanced',
+            'cache_size': 1000,
+            'probability': True,
+            'random_state': 42
+        }
+    },
+    'SVM (Poly)': {
+        'class': SVC,
+        'params': {
+            'C': 50,
+            'kernel': 'poly',
+            'degree': 3,
+            'gamma': 'scale',
+            'class_weight': 'balanced',
+            'cache_size': 1000,
+            'probability': True,
+            'random_state': 42
+        }
+    },
+    'Logistic Regression': {
+        'class': CalibratedClassifierCV,
+        'params': {
+            'estimator': LogisticRegression(
+                C=10.0,
+                max_iter=3000,
+                solver='lbfgs',
+                class_weight='balanced',
+                random_state=42
+            ),
+            'method': 'sigmoid',
+            'cv': 5
+        }
+    },
+    'MLP': {
+        'class': MLPClassifier,
+        'params': {
+            'hidden_layer_sizes': (100, 50),
+            'alpha': 0.001,
+            'learning_rate': 'adaptive',
+            'learning_rate_init': 0.001,
+            'max_iter': 500,
+            'early_stopping': True,
+            'validation_fraction': 0.1,
+            'random_state': 42
+        }
+    },
+    'KNN': {
+        'class': KNeighborsClassifier,
+        'params': {
+            'n_neighbors': 5,
+            'weights': 'distance',
+            'metric': 'euclidean',
+            'algorithm': 'auto',
+            'n_jobs': -1
+        }
+    },
+    'Gradient Boosting': {
+        'class': GradientBoostingClassifier,
+        'params': {
+            'n_estimators': 200,
+            'max_depth': 5,
+            'learning_rate': 0.1,
+            'subsample': 0.9,
+            'min_samples_split': 2,
+            'min_samples_leaf': 1,
+            'max_features': 'sqrt',
+            'random_state': 42
+        }
+    },
+    'Calibrated SVM': {
+        'class': CalibratedClassifierCV,
+        'params': {
+            'estimator': LinearSVC(
+                C=10,
+                class_weight='balanced',
+                max_iter=5000,
+                dual=False,
+                random_state=42
+            ),
+            'method': 'sigmoid',
+            'cv': 5
         }
     }
 }
@@ -227,7 +343,7 @@ def parse_args():
                         help='Number of features to select when using feature selection')
     parser.add_argument('--feature_classifiers', type=str, default='all',
                         help='Comma-separated list of classifiers to train with feature engineering')
-    parser.add_argument('--optimize', action='store_true', default= True,
+    parser.add_argument('--optimize', action='store_true', default= False,
                         help='Perform hyperparameter optimization for feature-based classifiers')
     
     parser.add_argument('--apply-mask', action='store_true',
@@ -1058,86 +1174,126 @@ def train_features(args, logger):
                         param_grid = {}
                 else:
                     # Optimized grids based on dataset: 2257 samples, 511 features, 83.6% class balance
-                    if name == 'RF':
+                    if name == 'CatBoost':
                         param_grid = {
-                            'n_estimators': [200, 300, 500],
-                            'max_depth': [10, 15, 20, None],
-                            'min_samples_split': [2, 5],
-                            'min_samples_leaf': [1, 2],
-                            'max_features': ['sqrt', 'log2'],
-                            'class_weight': ['balanced', None]
+                            'iterations': [800, 1000, 1200],           # Increased for better convergence
+                            'depth': [6, 8, 10],                       # Deeper trees for 511 features
+                            'learning_rate': [0.03, 0.05, 0.07],       # Finer granularity
+                            'l2_leaf_reg': [3, 5, 7, 10],              # Stronger regularization options
+                            'random_strength': [1.0, 1.5, 2.0],        # NEW: controls randomness
+                            'bagging_temperature': [0.5, 1.0, 1.5],    # NEW: bagging aggressiveness
+                            'border_count': [128, 254]                 # NEW: splits for numerical features
                         }
-                    elif 'SVM (RBF)' in name:
-                        param_grid = {
-                            'C': [1, 10, 50, 100],
-                            'gamma': ['scale', 0.01, 0.1, 1],
-                            'class_weight': ['balanced', None]
-                        }
-                    elif 'SVM (Linear)' in name:
-                        param_grid = {
-                            'C': [0.1, 1, 10, 100],
-                            'class_weight': ['balanced', None]
-                        }
-                    elif name == 'CatBoost':
-                        param_grid = {
-                            'iterations': [500, 800, 1000],
-                            'depth': [4, 5, 6],
-                            'learning_rate': [0.03, 0.05, 0.1],
-                            'l2_leaf_reg': [3, 5, 7]
-                        }
+
                     elif name == 'LightGBM':
                         param_grid = {
-                            'num_leaves': [31, 63, 127],             # Include smaller values
-                            'n_estimators': [300, 500, 800],
-                            'learning_rate': [0.01, 0.03, 0.05],     # Include 0.03
-                            'min_child_samples': [20, 30, 50],       # More aggressive
-                            'min_split_gain': [0.0, 0.01, 0.05],     # NEW: test gain thresholds
-                            'subsample': [0.7, 0.8, 0.9],            # Include 0.7
-                            'colsample_bytree': [0.7, 0.8, 0.9],     # Include 0.7
-                            'reg_alpha': [0.1, 0.5, 1.0],            # Stronger regularization
-                            'reg_lambda': [1.0, 2.0, 3.0],           # Stronger regularization
-                            'class_weight': ['balanced']
+                            'num_leaves': [31, 63, 95, 127],           # Wider range for 511 features
+                            'n_estimators': [500, 800, 1000],          # More trees for stability
+                            'learning_rate': [0.03, 0.05, 0.07],       # Finer granularity
+                            'max_depth': [7, 8, 10, -1],               # Include unlimited depth option
+                            'min_child_samples': [15, 20, 25],         # Adjusted for 2257 samples
+                            'min_split_gain': [0.0, 0.01, 0.05],       # Pruning threshold
+                            'subsample': [0.7, 0.8, 0.9],              # Row sampling
+                            'colsample_bytree': [0.7, 0.8, 0.9],       # Feature sampling
+                            'reg_alpha': [0.05, 0.1, 0.5],             # L1 regularization
+                            'reg_lambda': [0.5, 1.0, 2.0],             # L2 regularization
+                            'class_weight': ['balanced'],              # Handle 83.6/16.4 imbalance
+                            'min_data_in_leaf': [15, 20, 25]          # NEW: minimum leaf samples
                         }
-                    elif name == 'ExtraTrees':
-                        param_grid = {
-                            'n_estimators': [200, 300, 500],
-                            'max_depth': [10, 15, None],
-                            'min_samples_split': [2, 5],
-                            'max_features': ['sqrt', 'log2'],
-                            'class_weight': ['balanced', None]
-                        }
+
                     elif name == 'XGBoost':
                         param_grid = {
-                            'n_estimators': [50, 100, 200],
-                            'max_depth': [3, 5, 7],
-                            'learning_rate': [0.01, 0.1, 0.2],
-                            'subsample': [0.8, 0.9, 1.0]
+                            'n_estimators': [600, 800, 1000],          # More trees for 511 features
+                            'max_depth': [6, 7, 8, 10],                # Deeper for complex features
+                            'learning_rate': [0.03, 0.05, 0.07],       # Finer control
+                            'subsample': [0.75, 0.85, 0.95],           # Row sampling
+                            'colsample_bytree': [0.75, 0.85, 0.95],    # Feature sampling
+                            'gamma': [0.1, 0.2, 0.3],                  # Minimum loss reduction
+                            'min_child_weight': [2, 3, 4],             # Minimum sum of instance weight
+                            'reg_alpha': [0.05, 0.1, 0.2],             # L1 regularization
+                            'reg_lambda': [0.5, 1.0, 1.5],             # L2 regularization
+                            'scale_pos_weight': [1, 5, 10]             # NEW: handle class imbalance (83.6/16.4)
                         }
-                    elif name == 'Gradient Boosting':
+
+                    elif name == 'RF':
                         param_grid = {
-                            'n_estimators': [50, 100, 200],
-                            'max_depth': [3, 5, 7],
-                            'learning_rate': [0.01, 0.1, 0.2],
-                            'subsample': [0.8, 0.9, 1.0]
+                            'n_estimators': [300, 500, 700],           # More trees for stability
+                            'max_depth': [15, 20, 25, None],           # Deeper trees for 511 features
+                            'min_samples_split': [2, 3, 5],            # More granular
+                            'min_samples_leaf': [1, 2, 3],             # Leaf size control
+                            'max_features': ['sqrt', 'log2', 0.8],     # Include 80% of features option
+                            'class_weight': ['balanced', 'balanced_subsample'],  # Handle imbalance
+                            'max_samples': [0.7, 0.85, None],          # NEW: bootstrap sample size
+                            'criterion': ['gini', 'entropy']           # NEW: split criterion
                         }
+
+                    elif name == 'Extra Trees':
+                        param_grid = {
+                            'n_estimators': [300, 500, 700],
+                            'max_depth': [15, 20, 25, None],
+                            'min_samples_split': [2, 3, 5],
+                            'min_samples_leaf': [1, 2, 3],
+                            'max_features': ['sqrt', 'log2', 0.8],
+                            'class_weight': ['balanced'],
+                            'bootstrap': [False, True],                # NEW: use bootstrap
+                            'criterion': ['gini', 'entropy']
+                        }
+
+                    elif 'SVM (RBF)' in name:
+                        param_grid = {
+                            'C': [10, 50, 100, 200],                   # Higher C for complex boundaries
+                            'gamma': ['scale', 'auto', 0.01, 0.05, 0.1],  # More gamma options
+                            'class_weight': ['balanced'],              # Essential for imbalance
+                            'cache_size': [1000]                       # NEW: speed up computation
+                        }
+
+                    elif 'SVM (Linear)' in name:
+                        param_grid = {
+                            'C': [0.5, 1, 10, 50, 100],               # Wider range
+                            'class_weight': ['balanced'],
+                            'max_iter': [5000],                        # Ensure convergence
+                            'dual': [False]                            # NEW: faster for n_samples > n_features
+                        }
+
                     elif name == 'Logistic Regression':
                         param_grid = {
-                            'estimator__C': [0.1, 1.0, 10.0],  # Note the double underscore for nested params
-                            'estimator__max_iter': [2000, 3000],
+                            'estimator__C': [0.1, 1.0, 10.0, 50.0],   # Wider range
+                            'estimator__max_iter': [3000, 5000],       # Ensure convergence
+                            'estimator__solver': ['lbfgs', 'saga'],    # NEW: better solvers
+                            'estimator__class_weight': ['balanced'],   # Handle imbalance
                             'method': ['sigmoid', 'isotonic'],
                             'cv': [3, 5]
                         }
+
                     elif name == 'MLP':
                         param_grid = {
-                            'hidden_layer_sizes': [(50,), (100,), (50, 25), (100, 50)],
-                            'alpha': [0.0001, 0.001, 0.01],
-                            'learning_rate': ['constant', 'adaptive']
+                            'hidden_layer_sizes': [(100,), (100, 50), (150, 75), (200, 100, 50)],  # Larger networks
+                            'alpha': [0.0001, 0.001, 0.01, 0.05],     # More regularization options
+                            'learning_rate': ['constant', 'adaptive', 'invscaling'],  # NEW: more options
+                            'learning_rate_init': [0.001, 0.01],       # NEW: initial learning rate
+                            'max_iter': [500, 1000],                   # More iterations
+                            'early_stopping': [True],                  # NEW: prevent overfitting
+                            'validation_fraction': [0.1]               # NEW: validation set for early stopping
                         }
+
                     elif name == 'KNN':
                         param_grid = {
-                            'n_neighbors': [3, 5, 7, 9],
+                            'n_neighbors': [3, 5, 7, 9, 11],          # More neighbors for 2257 samples
                             'weights': ['uniform', 'distance'],
-                            'metric': ['euclidean', 'manhattan']
+                            'metric': ['euclidean', 'manhattan', 'minkowski'],  # More metrics
+                            'p': [1, 2],                               # NEW: Minkowski parameter
+                            'algorithm': ['auto', 'ball_tree']         # NEW: algorithm selection
+                        }
+
+                    elif name == 'Gradient Boosting':
+                        param_grid = {
+                            'n_estimators': [100, 200, 300],
+                            'max_depth': [4, 5, 6, 7],                # Deeper for 511 features
+                            'learning_rate': [0.05, 0.1, 0.15],
+                            'subsample': [0.8, 0.9, 1.0],
+                            'min_samples_split': [2, 5],
+                            'min_samples_leaf': [1, 2],
+                            'max_features': ['sqrt', 'log2']
                         }
                     else:
                         param_grid = {}
@@ -2146,87 +2302,127 @@ def train_models_from_features(features_filepath, args, logger, custom_params=No
                     else:
                         param_grid = {}
                 else:
-                    # Aggressive grids for high accuracy
-                    if name == 'RF':
+                    # Optimized grids based on dataset: 2257 samples, 511 features, 83.6% class balance
+                    if name == 'CatBoost':
                         param_grid = {
-                            'n_estimators': [200, 300, 500],
-                            'max_depth': [10, 15, 20, None],
-                            'min_samples_split': [2, 5],
-                            'min_samples_leaf': [1, 2],
-                            'max_features': ['sqrt', 'log2'],
-                            'class_weight': ['balanced', None]
+                            'iterations': [800, 1000, 1200],           # Increased for better convergence
+                            'depth': [6, 8, 10],                       # Deeper trees for 511 features
+                            'learning_rate': [0.03, 0.05, 0.07],       # Finer granularity
+                            'l2_leaf_reg': [3, 5, 7, 10],              # Stronger regularization options
+                            'random_strength': [1.0, 1.5, 2.0],        # NEW: controls randomness
+                            'bagging_temperature': [0.5, 1.0, 1.5],    # NEW: bagging aggressiveness
+                            'border_count': [128, 254]                 # NEW: splits for numerical features
                         }
-                    elif 'SVM (RBF)' in name:
-                        param_grid = {
-                            'C': [1, 10, 50, 100],
-                            'gamma': ['scale', 0.01, 0.1, 1],
-                            'class_weight': ['balanced', None]
-                        }
-                    elif 'SVM (Linear)' in name:
-                        param_grid = {
-                            'C': [0.1, 1, 10, 100],
-                            'class_weight': ['balanced', None]
-                        }
-                    elif name == 'CatBoost':
-                        param_grid = {
-                            'iterations': [500, 800, 1000],
-                            'depth': [4, 5, 6],
-                            'learning_rate': [0.03, 0.05, 0.1],
-                            'l2_leaf_reg': [3, 5, 7]
-                        }
+
                     elif name == 'LightGBM':
                         param_grid = {
-                            'num_leaves': [31, 63, 127],             # Include smaller values
-                            'n_estimators': [300, 500, 800],
-                            'learning_rate': [0.01, 0.03, 0.05],     # Include 0.03
-                            'min_child_samples': [20, 30, 50],       # More aggressive
-                            'min_split_gain': [0.0, 0.01, 0.05],     # NEW: test gain thresholds
-                            'subsample': [0.7, 0.8, 0.9],            # Include 0.7
-                            'colsample_bytree': [0.7, 0.8, 0.9],     # Include 0.7
-                            'reg_alpha': [0.1, 0.5, 1.0],            # Stronger regularization
-                            'reg_lambda': [1.0, 2.0, 3.0],           # Stronger regularization
-                            'class_weight': ['balanced']
+                            'num_leaves': [31, 63, 95, 127],           # Wider range for 511 features
+                            'n_estimators': [500, 800, 1000],          # More trees for stability
+                            'learning_rate': [0.03, 0.05, 0.07],       # Finer granularity
+                            'max_depth': [7, 8, 10, -1],               # Include unlimited depth option
+                            'min_child_samples': [15, 20, 25],         # Adjusted for 2257 samples
+                            'min_split_gain': [0.0, 0.01, 0.05],       # Pruning threshold
+                            'subsample': [0.7, 0.8, 0.9],              # Row sampling
+                            'colsample_bytree': [0.7, 0.8, 0.9],       # Feature sampling
+                            'reg_alpha': [0.05, 0.1, 0.5],             # L1 regularization
+                            'reg_lambda': [0.5, 1.0, 2.0],             # L2 regularization
+                            'class_weight': ['balanced'],              # Handle 83.6/16.4 imbalance
+                            'min_data_in_leaf': [15, 20, 25]          # NEW: minimum leaf samples
                         }
-                    elif name == 'ExtraTrees':
-                        param_grid = {
-                            'n_estimators': [200, 300, 500],
-                            'max_depth': [10, 15, None],
-                            'min_samples_split': [2, 5],
-                            'max_features': ['sqrt', 'log2'],
-                            'class_weight': ['balanced', None]
-                        }
+
                     elif name == 'XGBoost':
                         param_grid = {
-                            'n_estimators': [50, 100, 200],
-                            'max_depth': [3, 5, 7],
-                            'learning_rate': [0.01, 0.1, 0.2],
-                            'subsample': [0.8, 0.9, 1.0]
+                            'n_estimators': [600, 800, 1000],          # More trees for 511 features
+                            'max_depth': [6, 7, 8, 10],                # Deeper for complex features
+                            'learning_rate': [0.03, 0.05, 0.07],       # Finer control
+                            'subsample': [0.75, 0.85, 0.95],           # Row sampling
+                            'colsample_bytree': [0.75, 0.85, 0.95],    # Feature sampling
+                            'gamma': [0.1, 0.2, 0.3],                  # Minimum loss reduction
+                            'min_child_weight': [2, 3, 4],             # Minimum sum of instance weight
+                            'reg_alpha': [0.05, 0.1, 0.2],             # L1 regularization
+                            'reg_lambda': [0.5, 1.0, 1.5],             # L2 regularization
+                            'scale_pos_weight': [1, 5, 10]             # NEW: handle class imbalance (83.6/16.4)
                         }
-                    elif name == 'Gradient Boosting':
+
+                    elif name == 'RF':
                         param_grid = {
-                            'n_estimators': [50, 100, 200],
-                            'max_depth': [3, 5, 7],
-                            'learning_rate': [0.01, 0.1, 0.2],
-                            'subsample': [0.8, 0.9, 1.0]
+                            'n_estimators': [300, 500, 700],           # More trees for stability
+                            'max_depth': [15, 20, 25, None],           # Deeper trees for 511 features
+                            'min_samples_split': [2, 3, 5],            # More granular
+                            'min_samples_leaf': [1, 2, 3],             # Leaf size control
+                            'max_features': ['sqrt', 'log2', 0.8],     # Include 80% of features option
+                            'class_weight': ['balanced', 'balanced_subsample'],  # Handle imbalance
+                            'max_samples': [0.7, 0.85, None],          # NEW: bootstrap sample size
+                            'criterion': ['gini', 'entropy']           # NEW: split criterion
                         }
+
+                    elif name == 'Extra Trees':
+                        param_grid = {
+                            'n_estimators': [300, 500, 700],
+                            'max_depth': [15, 20, 25, None],
+                            'min_samples_split': [2, 3, 5],
+                            'min_samples_leaf': [1, 2, 3],
+                            'max_features': ['sqrt', 'log2', 0.8],
+                            'class_weight': ['balanced'],
+                            'bootstrap': [False, True],                # NEW: use bootstrap
+                            'criterion': ['gini', 'entropy']
+                        }
+
+                    elif 'SVM (RBF)' in name:
+                        param_grid = {
+                            'C': [10, 50, 100, 200],                   # Higher C for complex boundaries
+                            'gamma': ['scale', 'auto', 0.01, 0.05, 0.1],  # More gamma options
+                            'class_weight': ['balanced'],              # Essential for imbalance
+                            'cache_size': [1000]                       # NEW: speed up computation
+                        }
+
+                    elif 'SVM (Linear)' in name:
+                        param_grid = {
+                            'C': [0.5, 1, 10, 50, 100],               # Wider range
+                            'class_weight': ['balanced'],
+                            'max_iter': [5000],                        # Ensure convergence
+                            'dual': [False]                            # NEW: faster for n_samples > n_features
+                        }
+
                     elif name == 'Logistic Regression':
                         param_grid = {
-                            'estimator__C': [0.1, 1.0, 10.0],  # Note the double underscore for nested params
-                            'estimator__max_iter': [2000, 3000],
+                            'estimator__C': [0.1, 1.0, 10.0, 50.0],   # Wider range
+                            'estimator__max_iter': [3000, 5000],       # Ensure convergence
+                            'estimator__solver': ['lbfgs', 'saga'],    # NEW: better solvers
+                            'estimator__class_weight': ['balanced'],   # Handle imbalance
                             'method': ['sigmoid', 'isotonic'],
                             'cv': [3, 5]
                         }
+
                     elif name == 'MLP':
                         param_grid = {
-                            'hidden_layer_sizes': [(50,), (100,), (50, 25), (100, 50)],
-                            'alpha': [0.0001, 0.001, 0.01],
-                            'learning_rate': ['constant', 'adaptive']
+                            'hidden_layer_sizes': [(100,), (100, 50), (150, 75), (200, 100, 50)],  # Larger networks
+                            'alpha': [0.0001, 0.001, 0.01, 0.05],     # More regularization options
+                            'learning_rate': ['constant', 'adaptive', 'invscaling'],  # NEW: more options
+                            'learning_rate_init': [0.001, 0.01],       # NEW: initial learning rate
+                            'max_iter': [500, 1000],                   # More iterations
+                            'early_stopping': [True],                  # NEW: prevent overfitting
+                            'validation_fraction': [0.1]               # NEW: validation set for early stopping
                         }
+
                     elif name == 'KNN':
                         param_grid = {
-                            'n_neighbors': [3, 5, 7, 9],
+                            'n_neighbors': [3, 5, 7, 9, 11],          # More neighbors for 2257 samples
                             'weights': ['uniform', 'distance'],
-                            'metric': ['euclidean', 'manhattan']
+                            'metric': ['euclidean', 'manhattan', 'minkowski'],  # More metrics
+                            'p': [1, 2],                               # NEW: Minkowski parameter
+                            'algorithm': ['auto', 'ball_tree']         # NEW: algorithm selection
+                        }
+
+                    elif name == 'Gradient Boosting':
+                        param_grid = {
+                            'n_estimators': [100, 200, 300],
+                            'max_depth': [4, 5, 6, 7],                # Deeper for 511 features
+                            'learning_rate': [0.05, 0.1, 0.15],
+                            'subsample': [0.8, 0.9, 1.0],
+                            'min_samples_split': [2, 5],
+                            'min_samples_leaf': [1, 2],
+                            'max_features': ['sqrt', 'log2']
                         }
                     else:
                         param_grid = {}
@@ -2333,12 +2529,102 @@ def train_models_from_features(features_filepath, args, logger, custom_params=No
                     'NUM_FEATURES': len(selected_feature_names),
                     'NUM_SELECTED': len(selected_feature_names)
                 }
+    # === ADD ALL VISUALIZATION CODE FROM train_features() HERE ===
                 
-                # Save model
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                safe_name = name.replace(" ", "_").replace("(", "").replace(")", "").lower()
-                model_dir = f'model/feature_based_fast/{safe_name}_{timestamp}'
-                os.makedirs(model_dir, exist_ok=True)
+                # 1. ROC Curve
+                if y_pred_proba is not None:
+                    fpr, tpr, _ = roc_curve(y_test, y_pred_proba)
+                    
+                    plt.figure(figsize=(8, 6))
+                    plt.plot(fpr, tpr, label=f'{name} (AUC = {roc_auc:.3f})')
+                    plt.plot([0, 1], [0, 1], 'k--')
+                    plt.xlabel('False Positive Rate')
+                    plt.ylabel('True Positive Rate')
+                    plt.title(f'ROC Curve - {name}')
+                    plt.legend(loc='lower right')
+                    
+                    output_path = f'output/metrics/roc_curve_{name.replace(" ", "_")}_fast.png'
+                    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+                    plt.close()
+                    logger.info(f"ROC curve saved to {output_path}")
+                
+                # 2. Precision-Recall Curve
+                if y_pred_proba is not None:
+                    from sklearn.metrics import precision_recall_curve, average_precision_score
+                    
+                    precision_vals, recall_vals, _ = precision_recall_curve(y_test, y_pred_proba)
+                    ap_score = average_precision_score(y_test, y_pred_proba)
+                    
+                    plt.figure(figsize=(8, 6))
+                    plt.plot(recall_vals, precision_vals, label=f'{name} (AP = {ap_score:.3f})')
+                    plt.xlabel('Recall (Sensitivity)')
+                    plt.ylabel('Precision')
+                    plt.title(f'Precision-Recall Curve - {name}')
+                    plt.legend()
+                    plt.grid(True, alpha=0.3)
+                    
+                    output_path = f'output/metrics/pr_curve_{name.replace(" ", "_")}_fast.png'
+                    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+                    plt.close()
+                    logger.info(f"Precision-Recall curve saved to {output_path}")
+                
+                # 3. Confusion Matrix Heatmap
+                import seaborn as sns
+                
+                conf_matrix = confusion_matrix(y_test, y_pred)
+                plt.figure(figsize=(6, 5))
+                sns.heatmap(conf_matrix, annot=True, fmt='d', cmap='Blues',
+                        xticklabels=['SK', 'BCC'], yticklabels=['SK', 'BCC'])
+                plt.title(f'Confusion Matrix - {name}')
+                plt.xlabel('Predicted')
+                plt.ylabel('Actual')
+                
+                output_path = f'output/metrics/confusion_matrix_{name.replace(" ", "_")}_fast.png'
+                plt.savefig(output_path, dpi=300, bbox_inches='tight')
+                plt.close()
+                logger.info(f"Confusion matrix saved to {output_path}")
+                
+                # 4. Prediction Probability Distribution
+                if y_pred_proba is not None:
+                    plt.figure(figsize=(10, 6))
+                    plt.hist(y_pred_proba[y_test == 0], alpha=0.7, label='SK (Class 0)', bins=30, color='blue')
+                    plt.hist(y_pred_proba[y_test == 1], alpha=0.7, label='BCC (Class 1)', bins=30, color='red')
+                    plt.axvline(x=0.5, color='black', linestyle='--', label='Decision Threshold')
+                    plt.xlabel('Prediction Probability')
+                    plt.ylabel('Frequency')
+                    plt.title(f'Prediction Probability Distribution - {name}')
+                    plt.legend()
+                    plt.grid(True, alpha=0.3)
+                    
+                    output_path = f'output/metrics/prob_distribution_{name.replace(" ", "_")}_fast.png'
+                    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+                    plt.close()
+                    logger.info(f"Probability distribution saved to {output_path}")
+                
+                # 5. Feature Importance
+                if hasattr(clf, 'feature_importances_'):
+                    importances = clf.feature_importances_
+                    indices = np.argsort(importances)[::-1]
+                    n_top_features = min(30, len(selected_feature_names))
+                    top_indices = indices[:n_top_features]
+                    
+                    plt.figure(figsize=(10, 8))
+                    plt.title(f'Top {n_top_features} Feature Importances - {name}')
+                    plt.barh(range(n_top_features), importances[top_indices], align='center')
+                    plt.yticks(range(n_top_features), [selected_feature_names[i] for i in top_indices])
+                    plt.xlabel('Importance')
+                    plt.tight_layout()
+                    
+                    output_path = f'output/metrics/feature_importance_{name.replace(" ", "_")}_fast.png'
+                    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+                    plt.close()
+                    logger.info(f"Feature importance plot saved to {output_path}")
+
+                    # Save model
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    safe_name = name.replace(" ", "_").replace("(", "").replace(")", "").lower()
+                    model_dir = f'model/feature_based_fast/{safe_name}_{timestamp}'
+                    os.makedirs(model_dir, exist_ok=True)
                 
                 dump(clf, f'{model_dir}/model.joblib')
                 dump(scaler, f'{model_dir}/scaler.joblib')
@@ -2359,7 +2645,58 @@ def train_models_from_features(features_filepath, args, logger, custom_params=No
                 
             except Exception as e:
                 logger.error(f"Error training {name}: {str(e)}")
+        # === ADD COMBINED VISUALIZATIONS AFTER ALL MODELS TRAINED ===
         
+        # 1. Combined ROC Curves
+        if len(results) > 1:
+            plt.figure(figsize=(10, 8))
+            
+            for model_name, result in results.items():
+                if result.get('y_pred_proba') is not None:
+                    fpr, tpr, _ = roc_curve(y_test, result['y_pred_proba'])
+                    auc_score = result.get('AUC', 0) / 100
+                    plt.plot(fpr, tpr, label=f'{model_name} (AUC = {auc_score:.3f})', linewidth=2)
+            
+            plt.plot([0, 1], [0, 1], 'k--', alpha=0.5, label='Random Classifier')
+            plt.xlabel('False Positive Rate')
+            plt.ylabel('True Positive Rate')
+            plt.title('ROC Curves Comparison - All Models (Fast Training)')
+            plt.legend(loc='lower right')
+            plt.grid(True, alpha=0.3)
+            
+            output_path = 'output/metrics/roc_curves_combined_fast.png'
+            plt.savefig(output_path, dpi=300, bbox_inches='tight')
+            plt.close()
+            logger.info(f"Combined ROC curves saved to {output_path}")
+        
+        # 2. Model Performance Comparison Bar Chart
+        if len(results) > 1:
+            metrics = ['AC', 'SN', 'SP', 'PR', 'F1']
+            model_names = list(results.keys())
+            
+            fig, ax = plt.subplots(figsize=(12, 8))
+            x = np.arange(len(metrics))
+            width = 0.8 / len(model_names)
+            
+            for i, model in enumerate(model_names):
+                values = [results[model].get(metric, 0) for metric in metrics]
+                ax.bar(x + i*width, values, width, label=model, alpha=0.8)
+            
+            ax.set_xlabel('Metrics')
+            ax.set_ylabel('Score (%)')
+            ax.set_title('Model Performance Comparison (Fast Training)')
+            ax.set_xticks(x + width * (len(model_names) - 1) / 2)
+            ax.set_xticklabels(['Accuracy', 'Sensitivity', 'Specificity', 'Precision', 'F1'])
+            ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+            ax.grid(True, alpha=0.3)
+            plt.ylim(0, 105)
+            
+            output_path = 'output/metrics/model_comparison_fast.png'
+            plt.savefig(output_path, dpi=300, bbox_inches='tight')
+            plt.close()
+            logger.info(f"Model comparison chart saved to {output_path}")
+
+
         # Generate summary
         if results:
             generate_summary_table(results, logger, table_num=6, 

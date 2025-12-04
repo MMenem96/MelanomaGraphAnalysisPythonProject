@@ -130,7 +130,7 @@ class DataAugmentation:
         
         # Don't apply any additional processing - use image as-is
         augmentations[f"{filename}_original{extension}"] = image.copy()
-        augmentations[f"{filename}_h_flip{extension}"] = cv2.flip(image, 1)
+        augmentations[f"{filename}_v_flip{extension}"] = cv2.flip(image, 0)
         
         return augmentations
     
@@ -509,14 +509,14 @@ def run_traditional_augmentation():
     
     # CONFIGURE YOUR PATHS HERE
     input_directory = "data/bcc_segmented"           # Your original BCC images
-    output_directory = "data/bcc_segmented_augmented"  # Where to save augmented images
-    multiplier = 2                                   # 2x augmentation (original + horizontal flip)
+    output_directory = "data/bcc_segmented_vertical_flipped"  # Where to save augmented images
+    multiplier = 2                                   # 2x augmentation (original + vertical flip)
     cleanup_first = True                             # Clean output directory first
     
     # Display configuration
     print(f"📁 Input directory: {input_directory}")
     print(f"📁 Output directory: {output_directory}")
-    print(f"📊 Augmentation factor: {multiplier}x (horizontal flip only)")
+    print(f"📊 Augmentation factor: {multiplier}x (vertical flip only)")
     print(f"🧹 Cleanup first: {cleanup_first}")
     print(f"🖼️  Preserves: Full image size + original extensions")
     print("-" * 50)
@@ -705,7 +705,27 @@ def run_combined_augmentation():
 
 # Main execution - this runs when you hit the run button
 if __name__ == "__main__":
-    # Create an instance of DataAugmentation class first
+
+    # Run the enhanced main function with StyleGAN2 support
+    print("🔬 Starting BCC Data Augmentation System...")
+    success = main()
+    
+    if success:
+        print("\n🎉 Augmentation completed successfully!")
+        print("You can now train with the enhanced dataset.")
+    else:
+        print("\n💥 Augmentation failed!")
+        print("Check the error messages above.")
+    
+    # Keep the window open (optional)
+    input("\nPress Enter to exit...")
+
+        
+    """
+
+
+
+        # Create an instance of DataAugmentation class first
     augmenter = DataAugmentation()
     
     # Then call the method on the instance
@@ -723,21 +743,4 @@ if __name__ == "__main__":
         print(f"💾 Model saved at: {model_path}")
     else:
         print(f"❌ Generation failed!")
-
-
-        
-    """
-    # Run the enhanced main function with StyleGAN2 support
-    print("🔬 Starting BCC Data Augmentation System...")
-    success = main()
-    
-    if success:
-        print("\n🎉 Augmentation completed successfully!")
-        print("You can now train with the enhanced dataset.")
-    else:
-        print("\n💥 Augmentation failed!")
-        print("Check the error messages above.")
-    
-    # Keep the window open (optional)
-    input("\nPress Enter to exit...")
     """
