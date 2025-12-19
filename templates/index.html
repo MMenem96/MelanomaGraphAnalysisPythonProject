@@ -3,8 +3,8 @@
 {% block content %}
 <section class="hero text-center text-light">
     <div class="container">
-        <h1 class="display-4 fw-bold">BCC vs SK Detection System</h1>
-        <p class="lead mb-4">An advanced skin lesion classification system using graph-based feature extraction and machine learning.</p>
+        <h1 class="display-4 fw-bold">BCC vs BKL Detection System</h1>
+        <p class="lead mb-4">Advanced skin lesion classification using conventional feature engineering: Color, Texture, Geometric, and Krawtchouk Moment features.</p>
         <div class="d-flex justify-content-center gap-3">
             <a href="#upload-section" class="btn btn-primary btn-lg px-4">Analyze Image</a>
             <a href="/about" class="btn btn-outline-light btn-lg px-4">Learn More</a>
@@ -17,7 +17,7 @@
         <div class="row mb-5">
             <div class="col-12 text-center">
                 <h2 class="mb-4">How It Works</h2>
-                <p class="lead">Our system combines advanced image processing with graph-based analysis to differentiate between BCC and SK lesions.</p>
+                <p class="lead">Our system uses advanced feature engineering to differentiate between BCC (Basal Cell Carcinoma) and BKL (Benign Keratosis-like Lesions).</p>
             </div>
         </div>
         <div class="row g-4">
@@ -28,7 +28,7 @@
                             <i class="bi bi-image-fill" style="color: var(--primary-blue);"></i>
                         </div>
                         <h3 class="h5 mb-3">Image Preprocessing</h3>
-                        <p class="card-text">Your skin lesion image is preprocessed to normalize lighting and enhance features.</p>
+                        <p class="card-text">Hair removal using morphological operations and Gaussian filtering for noise reduction and feature enhancement.</p>
                     </div>
                 </div>
             </div>
@@ -36,10 +36,10 @@
                 <div class="card h-100 border-0 shadow-sm">
                     <div class="card-body text-center p-4">
                         <div class="feature-icon mx-auto">
-                            <i class="bi bi-diagram-3-fill" style="color: var(--primary-blue);"></i>
+                            <i class="bi bi-palette-fill" style="color: var(--primary-blue);"></i>
                         </div>
-                        <h3 class="h5 mb-3">Graph Construction</h3>
-                        <p class="card-text">The image is segmented into superpixels and represented as a graph structure.</p>
+                        <h3 class="h5 mb-3">Feature Extraction</h3>
+                        <p class="card-text">Extract 500+ features: Color statistics, texture (GLCM, LBP), geometric properties, and Multi-Parameter Krawtchouk moments.</p>
                     </div>
                 </div>
             </div>
@@ -49,8 +49,8 @@
                         <div class="feature-icon mx-auto">
                             <i class="bi bi-cpu-fill" style="color: var(--primary-blue);"></i>
                         </div>
-                        <h3 class="h5 mb-3">AI Analysis</h3>
-                        <p class="card-text">Our machine learning model analyzes 500+ features to classify the lesion as either Basal-cell Carcinoma (BCC) or Seborrheic Keratosis (SK).</p>
+                        <h3 class="h5 mb-3">Machine Learning Classification</h3>
+                        <p class="card-text">Advanced ensemble and gradient boosting models trained to distinguish BCC from BKL with high accuracy.</p>
                     </div>
                 </div>
             </div>
@@ -72,16 +72,10 @@
                                 <div class="form-text">Upload a clear image of the skin lesion for analysis.</div>
                             </div>
                             <div class="mb-4">
-                                <label for="classifier_type" class="form-label">Select model type</label>
-                                <select class="form-control" id="classifier_type" name="classifier_type">
-                                    <option value="svm_rbf">Support Vector Machine (RBF)</option>
-                                    <option value="svm_sigmoid">Support Vector Machine (Sigmoid)</option>
-                                    <option value="svm_poly">Support Vector Machine (Polynomial)</option>
-                                    <option value="rf">Random Forest</option>
-                                    <option value="knn">K-Nearest Neighbors</option>
-                                    <option value="mlp">Neural Network (MLP)</option>
-                                </select>
-                                <div class="form-text">Different models may perform better on different types of images.</div>
+                                <div class="alert alert-info">
+                                    <i class="bi bi-info-circle-fill me-2"></i>
+                                    <strong>Using Best Model:</strong> Highest performing SVM (Sigmoid kernel) with balanced class weights and optimized hyperparameters.
+                                </div>
                             </div>
                             <div class="text-center">
                                 <button type="submit" class="btn btn-primary btn-lg px-4">Analyze Image</button>

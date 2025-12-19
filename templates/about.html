@@ -5,35 +5,35 @@
     <div class="container">
         <div class="row">
             <div class="col-lg-8 mx-auto">
-                <h1 class="mb-4">About the BCC vs SK Detection System</h1>
+                <h1 class="mb-4">About the BCC vs BKL Detection System</h1>
                 
                 <div class="card mb-5 shadow-sm">
                     <div class="card-body p-4">
                         <h2 class="h4 mb-3">Research Background</h2>
-                        <p>This BCC vs SK detection system is based on the paper: "Melanoma Detection Using Spatial and Spectral Analysis on Superpixel Graphs" by Mahmoud H Annaby, Asmaa M Elwer, Muhammad A Rushdi, Mohamed E M Rasmy. The system uses advanced image processing techniques, graph theory, and machine learning to analyze dermoscopic images of skin lesions.</p>
-                        <p>By representing skin lesions as graphs of superpixels and extracting both spatial and spectral features, our system can identify subtle patterns that help differentiate between Seborrheic Keratosis (SK) and Basal-cell Carcinoma (BCC).</p>
+                        <p>This BCC vs BKL (Benign Keratosis-like Lesions) detection system uses advanced conventional feature engineering and machine learning to analyze dermoscopic images of skin lesions. The system differentiates between <strong>Basal Cell Carcinoma (BCC)</strong>, the most common type of skin cancer, and <strong>Benign Keratosis-like Lesions (BKL)</strong>, which include Seborrheic Keratosis and similar benign growths.</p>
+                        <p>By extracting comprehensive feature sets including color statistics, texture patterns, geometric properties, and Multi-Parameter Krawtchouk moments, our system can identify subtle patterns that help distinguish malignant from benign lesions.</p>
                     </div>
                 </div>
                 
-                <h2 class="h3 mb-4">Technical Approach</h2>
+                <h2 class="h3 mb-4">Technical Approach - Feature Engineering Pipeline</h2>
                 
                 <div class="accordion mb-5" id="technicalAccordion">
                     <div class="accordion-item">
                         <h2 class="accordion-header">
                             <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapseOne" aria-expanded="true" aria-controls="collapseOne">
-                                <i class="bi bi-image-fill me-2" style="color: var(--primary-blue);"></i> 1. Image Preprocessing
+                                <i class="bi bi-image-fill me-2" style="color: var(--primary-blue);"></i> 1. Image Preprocessing & Hair Removal
                             </button>
                         </h2>
                         <div id="collapseOne" class="accordion-collapse collapse show" data-bs-parent="#technicalAccordion">
                             <div class="accordion-body">
-                                <p>Before analysis, each image undergoes several preprocessing steps:</p>
+                                <p>Before feature extraction, each image undergoes sophisticated preprocessing:</p>
                                 <ul>
-                                    <li>Color space conversion to LAB color space</li>
-                                    <li>Contrast enhancement to improve feature visibility</li>
-                                    <li>Noise reduction to remove artifacts</li>
-                                    <li>Size normalization to ensure consistent analysis</li>
+                                    <li><strong>Hair Detection & Removal:</strong> Combined morphological operations (blackhat & tophat transforms) detect and remove hair artifacts using inpainting</li>
+                                    <li><strong>Gaussian Filtering:</strong> Reduces noise while preserving important lesion boundaries</li>
+                                    <li><strong>Lesion Masking:</strong> Automatically segments the lesion from background using transparency detection or intensity thresholding</li>
+                                    <li><strong>Color Space Normalization:</strong> Ensures consistent feature extraction across different imaging conditions</li>
                                 </ul>
-                                <p>The system also validates that the uploaded image contains a skin lesion with appropriate characteristics.</p>
+                                <p>These preprocessing steps significantly improve the quality of extracted features and classification accuracy.</p>
                             </div>
                         </div>
                     </div>
@@ -41,13 +41,19 @@
                     <div class="accordion-item">
                         <h2 class="accordion-header">
                             <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseTwo" aria-expanded="false" aria-controls="collapseTwo">
-                                <i class="bi bi-grid-3x3-gap-fill me-2" style="color: var(--primary-blue);"></i> 2. Superpixel Segmentation
+                                <i class="bi bi-palette-fill me-2" style="color: var(--primary-blue);"></i> 2. Color Feature Extraction
                             </button>
                         </h2>
                         <div id="collapseTwo" class="accordion-collapse collapse" data-bs-parent="#technicalAccordion">
                             <div class="accordion-body">
-                                <p>The system divides the image into approximately 20 superpixels using the SLIC (Simple Linear Iterative Clustering) algorithm. Each superpixel represents a region with similar color and texture characteristics.</p>
-                                <p>Superpixels provide a meaningful decomposition of the image that preserves important boundaries and structures within the lesion.</p>
+                                <p>Comprehensive color analysis across multiple color spaces:</p>
+                                <ul>
+                                    <li><strong>RGB Color Space:</strong> Mean, standard deviation, skewness, kurtosis for each channel</li>
+                                    <li><strong>HSV Color Space:</strong> Hue, saturation, and value statistics capture color distribution</li>
+                                    <li><strong>LAB Color Space:</strong> Perceptually uniform color representation</li>
+                                    <li><strong>Advanced Statistics:</strong> Color moments, histograms, and inter-channel correlations</li>
+                                </ul>
+                                <p>Color features help differentiate the pigmentation patterns characteristic of BCC vs benign lesions.</p>
                             </div>
                         </div>
                     </div>
@@ -55,18 +61,19 @@
                     <div class="accordion-item">
                         <h2 class="accordion-header">
                             <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseThree" aria-expanded="false" aria-controls="collapseThree">
-                                <i class="bi bi-diagram-3-fill me-2" style="color: var(--primary-blue);"></i> 3. Graph Construction
+                                <i class="bi bi-grid-3x3-gap-fill me-2" style="color: var(--primary-blue);"></i> 3. Texture Feature Extraction
                             </button>
                         </h2>
                         <div id="collapseThree" class="accordion-collapse collapse" data-bs-parent="#technicalAccordion">
                             <div class="accordion-body">
-                                <p>The superpixels are represented as nodes in a graph, with edges connecting similar regions. The edge weights are determined by the feature similarity between superpixels, including:</p>
+                                <p>Multiple texture analysis techniques capture surface patterns:</p>
                                 <ul>
-                                    <li>Color similarity in LAB space</li>
-                                    <li>Texture similarity using Haralick features</li>
-                                    <li>Spatial proximity between regions</li>
+                                    <li><strong>GLCM (Gray Level Co-occurrence Matrix):</strong> Contrast, correlation, energy, homogeneity, entropy - captures spatial relationships</li>
+                                    <li><strong>LBP (Local Binary Patterns):</strong> Rotation-invariant texture descriptors</li>
+                                    <li><strong>Haralick Texture Features:</strong> 13 statistical texture measures</li>
+                                    <li><strong>Gabor Filters:</strong> Multi-scale and multi-orientation texture analysis</li>
                                 </ul>
-                                <p>This graph representation captures the structural relationships between different regions of the lesion.</p>
+                                <p>Texture features detect subtle surface irregularities that distinguish malignant from benign lesions.</p>
                             </div>
                         </div>
                     </div>
@@ -74,17 +81,19 @@
                     <div class="accordion-item">
                         <h2 class="accordion-header">
                             <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseFour" aria-expanded="false" aria-controls="collapseFour">
-                                <i class="bi bi-bar-chart-fill me-2" style="color: var(--primary-blue);"></i> 4. Feature Extraction
+                                <i class="bi bi-pentagon-fill me-2" style="color: var(--primary-blue);"></i> 4. Geometric & Shape Features
                             </button>
                         </h2>
                         <div id="collapseFour" class="accordion-collapse collapse" data-bs-parent="#technicalAccordion">
                             <div class="accordion-body">
-                                <p>The system extracts over 500 features from the graph and image, categorized as:</p>
+                                <p>Morphological analysis quantifies lesion shape characteristics:</p>
                                 <ul>
-                                    <li><strong>Graph Features (149 features):</strong> Local node measures (120), global graph measures (5), and spectral features (24)</li>
-                                    <li><strong>Conventional Image Features (394 features):</strong> Color features (150), texture features (144), and geometric/shape features (100)</li>
+                                    <li><strong>Basic Measurements:</strong> Area, perimeter, compactness, circularity</li>
+                                    <li><strong>Asymmetry Indices:</strong> Measures irregular borders (ABCD rule of dermoscopy)</li>
+                                    <li><strong>Border Irregularity:</strong> Fractal dimension, contour complexity</li>
+                                    <li><strong>Eccentricity & Solidity:</strong> Shape elongation and boundary smoothness</li>
                                 </ul>
-                                <p>These features capture both the spatial and spectral characteristics of the lesion that help distinguish Basal-cell Carcinoma (BCC) from Seborrheic Keratosis (SK).</p>
+                                <p>Irregular shapes and asymmetric borders are key indicators of malignancy.</p>
                             </div>
                         </div>
                     </div>
@@ -92,24 +101,60 @@
                     <div class="accordion-item">
                         <h2 class="accordion-header">
                             <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseFive" aria-expanded="false" aria-controls="collapseFive">
-                                <i class="bi bi-cpu-fill me-2" style="color: var(--primary-blue);"></i> 5. Machine Learning Classification
+                                <i class="bi bi-calculator-fill me-2" style="color: var(--primary-blue);"></i> 5. Krawtchouk Moment Features
                             </button>
                         </h2>
                         <div id="collapseFive" class="accordion-collapse collapse" data-bs-parent="#technicalAccordion">
                             <div class="accordion-body">
-                                <p>The extracted features are fed into a machine learning classifier (Support Vector Machine or Random Forest) that has been trained on a dataset of known Basal-cell Carcinoma (BCC) and Seborrheic Keratosis (SK) lesion images.</p>
-                                <p>The classifier outputs a probability score indicating the likelihood that the lesion is Basal-cell Carcinoma (BCC).</p>
-                                <p>Important evaluation metrics include accuracy, sensitivity, specificity, and the area under the ROC curve.</p>
+                                <p>Advanced mathematical descriptors for pattern recognition:</p>
+                                <ul>
+                                    <li><strong>Multi-Parameter Krawtchouk Moments:</strong> Orthogonal moments providing rotation, scale, and translation invariance</li>
+                                    <li><strong>Low & High Order Moments:</strong> Capture global and local image patterns</li>
+                                    <li><strong>Computational Efficiency:</strong> Discrete orthogonal polynomials optimized for digital images</li>
+                                </ul>
+                                <p>Krawtchouk moments encode complex spatial information that complements traditional features.</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="accordion-item">
+                        <h2 class="accordion-header">
+                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseSix" aria-expanded="false" aria-controls="collapseSix">
+                                <i class="bi bi-cpu-fill me-2" style="color: var(--primary-blue);"></i> 6. Machine Learning Classification
+                            </button>
+                        </h2>
+                        <div id="collapseSix" class="accordion-collapse collapse" data-bs-parent="#technicalAccordion">
+                            <div class="accordion-body">
+                                <p>State-of-the-art ensemble and gradient boosting models:</p>
+                                <ul>
+                                    <li><strong>XGBoost:</strong> Extreme gradient boosting with high accuracy and efficiency (Recommended)</li>
+                                    <li><strong>Random Forest:</strong> Robust ensemble method with feature importance analysis</li>
+                                    <li><strong>Gradient Boosting:</strong> Sequential ensemble learning with strong generalization</li>
+                                    <li><strong>SVM (RBF Kernel):</strong> Support vector machines for non-linear classification</li>
+                                </ul>
+                                <p>Models are trained on balanced datasets with advanced hyperparameter optimization and cross-validation.</p>
+                                <p><strong>Feature Selection:</strong> Mutual information, chi-squared tests, and RFE identify the most discriminative features.</p>
                             </div>
                         </div>
                     </div>
                 </div>
                 
+                <div class="card mb-5 shadow-sm bg-light">
+                    <div class=\"card-body p-4\">
+                        <h2 class=\"h4 mb-3\"><i class=\"bi bi-info-circle-fill me-2 text-info\"></i>Clinical Context</h2>
+                        <h5>Basal Cell Carcinoma (BCC)</h5>
+                        <p>The most common type of skin cancer. While rarely life-threatening, early detection and treatment prevent significant tissue damage and disfigurement.</p>
+                        <h5>Benign Keratosis-like Lesions (BKL)</h5>
+                        <p>Include Seborrheic Keratosis and similar benign growths. These are non-cancerous but can sometimes resemble malignant lesions visually.</p>
+                    </div>
+                </div>
+                
                 <div class="card mb-5 shadow-sm">
                     <div class="card-body p-4">
-                        <h2 class="h4 mb-3"><i class="bi bi-exclamation-triangle-fill me-2 text-warning"></i>Important Disclaimer</h2>
-                        <p>This system is intended as a supporting tool for preliminary assessment and should not replace professional medical diagnosis. Always consult with a qualified dermatologist for proper evaluation of skin lesions.</p>
+                        <h2 class="h4 mb-3"><i class="bi bi-exclamation-triangle-fill me-2 text-warning"></i>Important Medical Disclaimer</h2>
+                        <p>This system is intended as a supporting tool for preliminary assessment and should <strong>NOT</strong> replace professional medical diagnosis. Always consult with a qualified dermatologist for proper evaluation of skin lesions.</p>
                         <p>The accuracy of the system depends on image quality, proper preprocessing, and adequate training data. Results should be interpreted with caution and in the appropriate clinical context.</p>
+                        <p><strong>If you have any concerns about a skin lesion, seek immediate medical attention from a healthcare professional.</strong></p>
                     </div>
                 </div>
             </div>

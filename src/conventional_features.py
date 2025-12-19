@@ -21,6 +21,10 @@ class ConventionalFeatureExtractor:
             
             if mask is None:
                 mask = np.ones(image.shape[:2], dtype=bool)
+                
+            # Extract geometric features
+            geometric_features = self.extract_geometric_features(mask)
+            features.update(geometric_features)
 
             # Extract texture features
             texture_features = self.extract_texture_features(image, mask)
@@ -36,9 +40,8 @@ class ConventionalFeatureExtractor:
             
             """
 
-            # Extract geometric features
-            geometric_features = self.extract_geometric_features(mask)
-            features.update(geometric_features)
+
+
 
             # Enhanced color features
             enhanced_color_features = self.extract_enhanced_color_features(image, mask)

@@ -35,32 +35,23 @@
                                 </div>
                             </div>
                             <div class="col-md-6">
-                                <h3 class="h5 mb-3">Superpixel Segmentation</h3>
+                                <h3 class="h5 mb-3">Preprocessed Image</h3>
                                 <div class="card mb-4">
-                                    <img src="{{ result.superpixels_image_path }}" class="card-img-top" alt="Superpixel segmentation">
+                                    <img src="{{ result.preprocessed_image_path }}" class="card-img-top" alt="Preprocessed image">
                                     <div class="card-body">
-                                        <p class="card-text text-muted mb-0">Segmentation into approximately 20 superpixels</p>
+                                        <p class="card-text text-muted mb-0">Hair removal + Gaussian filtering applied</p>
                                     </div>
                                 </div>
                             </div>
                         </div>
                         
                         <div class="row mt-3">
-                            <div class="col-md-6">
-                                <h3 class="h5 mb-3">Graph Representation</h3>
-                                <div class="card mb-4">
-                                    <img src="{{ result.graph_image_path }}" class="card-img-top" alt="Graph representation">
-                                    <div class="card-body">
-                                        <p class="card-text text-muted mb-0">Nodes represent superpixels, edges represent similarity</p>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="col-md-6">
+                            <div class="col-12">
                                 <h3 class="h5 mb-3">Classification Result</h3>
                                 <div class="card mb-4">
                                     <div class="card-body text-center p-4">
-                                        <h4 class="display-6 mb-3 {% if result.prediction == 'Basal-cell Carcinoma (BCC)' %}text-danger{% else %}text-success{% endif %}">
-                                            <i class="bi {% if result.prediction == 'Basal-cell Carcinoma (BCC)' %}bi-exclamation-triangle-fill{% else %}bi-check-circle-fill{% endif %} me-2"></i>
+                                        <h4 class="display-6 mb-3 {% if 'BCC' in result.prediction %}text-danger{% else %}text-success{% endif %}">
+                                            <i class="bi {% if 'BCC' in result.prediction %}bi-exclamation-triangle-fill{% else %}bi-check-circle-fill{% endif %} me-2"></i>
                                             {{ result.prediction }}
                                         </h4>
                                         
@@ -134,29 +125,17 @@
                             <div class="col-12">
                                 <div class="card">
                                     <div class="card-header">
-                                        <h3 class="h5 mb-0">Technical Details</h3>
+                                        <h3 class="h5 mb-0">Technical Details - Feature-Based Classification</h3>
                                     </div>
                                     <div class="card-body">
                                         <div class="row">
                                             <div class="col-md-6">
-                                                <p><strong>Features Extracted:</strong> {{ result.features_extracted }}</p>
-                                                {% if result.features_selected %}
-                                                <p><strong>Features Selected:</strong> {{ result.features_selected }}</p>
-                                                <p><strong>Feature Reduction:</strong> {{ ((1 - (result.features_selected / result.features_extracted)) * 100) | round(1) }}%</p>
-                                                {% endif %}
-                                                <p><strong>Superpixels Generated:</strong> 20</p>
-                                                <p><strong>Connectivity Threshold:</strong> 0.5</p>
+                                                <p><strong>Feature Types:</strong> Color, Texture (GLCM, LBP), Geometric, Krawtchouk Moments</p>
+                                                <p><strong>Preprocessing:</strong> Hair removal, Gaussian filtering, Lesion masking</p>
                                             </div>
                                             <div class="col-md-6">
-                                                <p><strong>Classifier Type:</strong> 
-                                                {% if 'svm_rbf' in request.form.get('classifier_type', '') %}Support Vector Machine (RBF Kernel)
-                                                {% elif 'svm_sigmoid' in request.form.get('classifier_type', '') %}Support Vector Machine (Sigmoid Kernel)
-                                                {% elif 'svm_poly' in request.form.get('classifier_type', '') %}Support Vector Machine (Polynomial Kernel)
-                                                {% elif 'rf' in request.form.get('classifier_type', '') %}Random Forest
-                                                {% elif 'knn' in request.form.get('classifier_type', '') %}K-Nearest Neighbors
-                                                {% elif 'mlp' in request.form.get('classifier_type', '') %}Neural Network (MLP)
-                                                {% else %}Support Vector Machine{% endif %}
-                                                </p>
+                                                <p><strong>Model Used:</strong> {{ result.model_used if result.model_used else 'SVM (Sigmoid)' }} <span class="badge bg-success">Best Model</span></p>
+                                                <p><strong>Model Location:</strong> highest_model_svm_rbf</p>
                                                 <p><strong>Risk Level:</strong> {{ result.risk_level }}</p>
                                                 <p><strong>Analysis Date:</strong> {{ result.timestamp }}</p>
                                                 <p><strong>Analysis ID:</strong> {{ result.analysis_id }}</p>
