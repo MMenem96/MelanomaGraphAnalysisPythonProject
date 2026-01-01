@@ -713,94 +713,50 @@ class MDFKTImageAnalyzer:
             if is_transformed_real:
                 # Real transformed: show only Input and Transformed (2 plots)
                 fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-                fig.suptitle(f'{lambda_name}\nTest Signal: f(k) = cos(π·k/N), N={self.N}', 
-                            fontsize=14, fontweight='bold')
+                # fig.suptitle(f'{lambda_name}\nTest Signal: f(k) = cos(π·k/N), N={self.N}', 
+                #             fontsize=14, fontweight='bold')
                 
                 # Plot 1: Input Signal
-                axes[0].plot(k, test_signal, 'k-', linewidth=2.5, label='Input Signal')
+                axes[0].plot(k, test_signal, 'k-', linewidth=2.5)
                 axes[0].scatter(k, test_signal, c='black', s=30, alpha=0.6, zorder=3)
                 axes[0].axhline(y=0, color='gray', linestyle='--', alpha=0.5)
-                axes[0].set_xlabel('k (sample index)', fontsize=11)
+                axes[0].set_xlabel('k', fontsize=11)
                 axes[0].set_ylabel('Amplitude', fontsize=11)
                 axes[0].set_title('Input: f(k) = cos(π·k/N)', fontsize=12, fontweight='bold')
                 axes[0].grid(True, alpha=0.3)
-                axes[0].legend(fontsize=10)
                 
                 # Plot 2: Transformed Signal
-                axes[1].plot(k, real_part, 'purple', linewidth=2.5, label='Y[k] (Transformed)')
+                axes[1].plot(k, real_part, 'purple', linewidth=2.5)
                 axes[1].scatter(k, real_part, c='purple', s=30, alpha=0.6, zorder=3)
                 axes[1].axhline(y=0, color='gray', linestyle='--', alpha=0.5)
-                axes[1].set_xlabel('k (frequency index)', fontsize=11)
+                axes[1].set_xlabel('k', fontsize=11)
                 axes[1].set_ylabel('Amplitude', fontsize=11)
-                axes[1].set_title('Transformed Signal: Y[k]', fontsize=12, fontweight='bold')
+                axes[1].set_title('Transformed: Y[k]', fontsize=12, fontweight='bold')
                 axes[1].grid(True, alpha=0.3)
-                axes[1].legend(fontsize=10)
                 
             else:
-                # Complex transformed: Different layout - 2 plots top, 3 plots bottom
-                fig = plt.figure(figsize=(18, 12))
-                fig.suptitle(f'{lambda_name}\nTest Signal: f(k) = cos(π·k/N), N={self.N}', 
-                            fontsize=14, fontweight='bold')
+                # Complex transformed: show Input and Transformed
+                fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+                # fig.suptitle(f'{lambda_name}\nTest Signal: f(k) = cos(π·k/N), N={self.N}', 
+                #             fontsize=14, fontweight='bold')
                 
-                # Create custom grid: 2 rows, first row has 2 plots, second row has 3 plots
-                gs = fig.add_gridspec(2, 3, hspace=0.3, wspace=0.3)
+                # Plot 1: Input Signal
+                axes[0].plot(k, test_signal, 'k-', linewidth=2.5)
+                axes[0].scatter(k, test_signal, c='black', s=30, alpha=0.6, zorder=3)
+                axes[0].axhline(y=0, color='gray', linestyle='--', alpha=0.5)
+                axes[0].set_xlabel('k', fontsize=11)
+                axes[0].set_ylabel('Amplitude', fontsize=11)
+                axes[0].set_title('Input: f(k) = cos(π·k/N)', fontsize=12, fontweight='bold')
+                axes[0].grid(True, alpha=0.3)
                 
-                # Plot 1: Input Signal (top-left, spans 1.5 columns)
-                ax1 = fig.add_subplot(gs[0, 0])
-                ax1.plot(k, test_signal, 'k-', linewidth=2.5, label='Input Signal')
-                ax1.scatter(k, test_signal, c='black', s=30, alpha=0.6, zorder=3)
-                ax1.axhline(y=0, color='gray', linestyle='--', alpha=0.5)
-                ax1.set_xlabel('k (sample index)', fontsize=11)
-                ax1.set_ylabel('Amplitude', fontsize=11)
-                ax1.set_title('Input: f(k) = cos(π·k/N)', fontsize=12, fontweight='bold')
-                ax1.grid(True, alpha=0.3)
-                ax1.legend(fontsize=10)
-                
-                # Plot 2: Magnitude (top-right, spans 1.5 columns)
-                ax2 = fig.add_subplot(gs[0, 1:])
-                ax2.plot(k, magnitude, 'g-', linewidth=2.5, label='|Y[k]|')
-                ax2.scatter(k, magnitude, c='green', s=30, alpha=0.6, zorder=3)
-                ax2.set_xlabel('k (frequency index)', fontsize=11)
-                ax2.set_ylabel('Magnitude', fontsize=11)
-                ax2.set_title('Output Magnitude: |Y[k]|', fontsize=12, fontweight='bold')
-                ax2.grid(True, alpha=0.3)
-                ax2.legend(fontsize=10)
-                
-                # Plot 3: Real Part (bottom-left)
-                ax3 = fig.add_subplot(gs[1, 0])
-                ax3.plot(k, real_part, 'b-', linewidth=2.5, label='Re{Y[k]}')
-                ax3.scatter(k, real_part, c='blue', s=30, alpha=0.6, zorder=3)
-                ax3.axhline(y=0, color='gray', linestyle='--', alpha=0.5)
-                ax3.set_xlabel('k (frequency index)', fontsize=11)
-                ax3.set_ylabel('Real Part', fontsize=11)
-                ax3.set_title('Output Real Part: Re{Y[k]}', fontsize=12, fontweight='bold')
-                ax3.grid(True, alpha=0.3)
-                ax3.legend(fontsize=10)
-                
-                # Plot 4: Imaginary Part (bottom-middle)
-                ax4 = fig.add_subplot(gs[1, 1])
-                ax4.plot(k, imag_part, 'r-', linewidth=2.5, label='Im{Y[k]}')
-                ax4.scatter(k, imag_part, c='red', s=30, alpha=0.6, zorder=3)
-                ax4.axhline(y=0, color='gray', linestyle='--', alpha=0.5)
-                ax4.set_xlabel('k (frequency index)', fontsize=11)
-                ax4.set_ylabel('Imaginary Part', fontsize=11)
-                ax4.set_title('Output Imaginary Part: Im{Y[k]}', fontsize=12, fontweight='bold')
-                ax4.grid(True, alpha=0.3)
-                ax4.legend(fontsize=10)
-                
-                # Plot 5: Phase (bottom-right)
-                ax5 = fig.add_subplot(gs[1, 2])
-                ax5.plot(k, phase, 'm-', linewidth=2.5, label='∠Y[k]')
-                ax5.scatter(k, phase, c='magenta', s=30, alpha=0.6, zorder=3)
-                ax5.axhline(y=0, color='gray', linestyle='--', alpha=0.5)
-                ax5.axhline(y=np.pi, color='gray', linestyle=':', alpha=0.5, label='±π')
-                ax5.axhline(y=-np.pi, color='gray', linestyle=':', alpha=0.5)
-                ax5.set_xlabel('k (frequency index)', fontsize=11)
-                ax5.set_ylabel('Phase (radians)', fontsize=11)
-                ax5.set_title('Output Phase: ∠Y[k]', fontsize=12, fontweight='bold')
-                ax5.grid(True, alpha=0.3)
-                ax5.legend(fontsize=10)
-                ax5.set_ylim([-np.pi - 0.5, np.pi + 0.5])
+                # Plot 2: Transformed (show real part for visualization)
+                axes[1].plot(k, real_part, 'purple', linewidth=2.5)
+                axes[1].scatter(k, real_part, c='purple', s=30, alpha=0.6, zorder=3)
+                axes[1].axhline(y=0, color='gray', linestyle='--', alpha=0.5)
+                axes[1].set_xlabel('k', fontsize=11)
+                axes[1].set_ylabel('Amplitude', fontsize=11)
+                axes[1].set_title('Transformed: Y[k]', fontsize=12, fontweight='bold')
+                axes[1].grid(True, alpha=0.3)
             
             plt.tight_layout(rect=[0, 0, 1, 0.96])
             
@@ -908,8 +864,8 @@ class MDFKTImageAnalyzer:
             if is_transformed_real:
                 # Real transformed: show only Input and Transformed (2 plots)
                 fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-                fig.suptitle(f'{lambda_name}\nTest Signal: f(k) = sin(k·π/N), N={self.N}', 
-                            fontsize=14, fontweight='bold')
+                # fig.suptitle(f'{lambda_name}\nTest Signal: f(k) = sin(k·π/N), N={self.N}', 
+                #             fontsize=14, fontweight='bold')
                 
                 axes[0].plot(k, test_signal, 'k-', linewidth=2.5)
                 axes[0].scatter(k, test_signal, c='black', s=30, alpha=0.6, zorder=3)
@@ -927,56 +883,26 @@ class MDFKTImageAnalyzer:
                 axes[1].set_title('Transformed: Y[k]', fontsize=12, fontweight='bold')
                 axes[1].grid(True, alpha=0.3)
             else:
-                fig = plt.figure(figsize=(18, 12))
-                fig.suptitle(f'{lambda_name}\nTest Signal: f(k) = sin(k·π/N), N={self.N}', 
-                            fontsize=14, fontweight='bold')
+                # Complex transformed: show Input and Transformed
+                fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+                # fig.suptitle(f'{lambda_name}\nTest Signal: f(k) = sin(k·π/N), N={self.N}', 
+                #             fontsize=14, fontweight='bold')
                 
-                gs = fig.add_gridspec(2, 3, hspace=0.3, wspace=0.3)
+                axes[0].plot(k, test_signal, 'k-', linewidth=2.5)
+                axes[0].scatter(k, test_signal, c='black', s=30, alpha=0.6, zorder=3)
+                axes[0].axhline(y=0, color='gray', linestyle='--', alpha=0.5)
+                axes[0].set_xlabel('k', fontsize=11)
+                axes[0].set_ylabel('Amplitude', fontsize=11)
+                axes[0].set_title('Input: f(k) = sin(k·π/N)', fontsize=12, fontweight='bold')
+                axes[0].grid(True, alpha=0.3)
                 
-                ax1 = fig.add_subplot(gs[0, 0])
-                ax1.plot(k, test_signal, 'k-', linewidth=2.5)
-                ax1.scatter(k, test_signal, c='black', s=30, alpha=0.6, zorder=3)
-                ax1.axhline(y=0, color='gray', linestyle='--', alpha=0.5)
-                ax1.set_xlabel('k', fontsize=11)
-                ax1.set_ylabel('Amplitude', fontsize=11)
-                ax1.set_title('Input: f(k) = sin(k·π/N)', fontsize=12, fontweight='bold')
-                ax1.grid(True, alpha=0.3)
-                
-                ax2 = fig.add_subplot(gs[0, 1:])
-                ax2.plot(k, magnitude, 'g-', linewidth=2.5)
-                ax2.scatter(k, magnitude, c='green', s=30, alpha=0.6, zorder=3)
-                ax2.set_xlabel('k', fontsize=11)
-                ax2.set_ylabel('Magnitude', fontsize=11)
-                ax2.set_title('Magnitude: |Y[k]|', fontsize=12, fontweight='bold')
-                ax2.grid(True, alpha=0.3)
-                
-                ax3 = fig.add_subplot(gs[1, 0])
-                ax3.plot(k, real_part, 'b-', linewidth=2.5)
-                ax3.scatter(k, real_part, c='blue', s=30, alpha=0.6, zorder=3)
-                ax3.axhline(y=0, color='gray', linestyle='--', alpha=0.5)
-                ax3.set_xlabel('k', fontsize=11)
-                ax3.set_ylabel('Real Part', fontsize=11)
-                ax3.set_title('Real: Re{Y[k]}', fontsize=12, fontweight='bold')
-                ax3.grid(True, alpha=0.3)
-                
-                ax4 = fig.add_subplot(gs[1, 1])
-                ax4.plot(k, imag_part, 'r-', linewidth=2.5)
-                ax4.scatter(k, imag_part, c='red', s=30, alpha=0.6, zorder=3)
-                ax4.axhline(y=0, color='gray', linestyle='--', alpha=0.5)
-                ax4.set_xlabel('k', fontsize=11)
-                ax4.set_ylabel('Imaginary Part', fontsize=11)
-                ax4.set_title('Imaginary: Im{Y[k]}', fontsize=12, fontweight='bold')
-                ax4.grid(True, alpha=0.3)
-                
-                ax5 = fig.add_subplot(gs[1, 2])
-                ax5.plot(k, phase, 'm-', linewidth=2.5)
-                ax5.scatter(k, phase, c='magenta', s=30, alpha=0.6, zorder=3)
-                ax5.axhline(y=0, color='gray', linestyle='--', alpha=0.5)
-                ax5.set_xlabel('k', fontsize=11)
-                ax5.set_ylabel('Phase (radians)', fontsize=11)
-                ax5.set_title('Phase: ∠Y[k]', fontsize=12, fontweight='bold')
-                ax5.grid(True, alpha=0.3)
-                ax5.set_ylim([-np.pi - 0.5, np.pi + 0.5])
+                axes[1].plot(k, real_part, 'purple', linewidth=2.5)
+                axes[1].scatter(k, real_part, c='purple', s=30, alpha=0.6, zorder=3)
+                axes[1].axhline(y=0, color='gray', linestyle='--', alpha=0.5)
+                axes[1].set_xlabel('k', fontsize=11)
+                axes[1].set_ylabel('Amplitude', fontsize=11)
+                axes[1].set_title('Transformed: Y[k]', fontsize=12, fontweight='bold')
+                axes[1].grid(True, alpha=0.3)
             
             plt.tight_layout(rect=[0, 0, 1, 0.96])
             
@@ -1076,8 +1002,8 @@ class MDFKTImageAnalyzer:
             if is_transformed_real:
                 # Real transformed: show only Input and Transformed (2 plots)
                 fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-                fig.suptitle(f'{lambda_name}\nTest Signal: f(k) = 1/(k+1), N={self.N}', 
-                            fontsize=14, fontweight='bold')
+                # fig.suptitle(f'{lambda_name}\nTest Signal: f(k) = 1/(k+1), N={self.N}', 
+                #             fontsize=14, fontweight='bold')
                 
                 axes[0].plot(k, test_signal, 'k-', linewidth=2.5)
                 axes[0].scatter(k, test_signal, c='black', s=30, alpha=0.6, zorder=3)
@@ -1094,55 +1020,24 @@ class MDFKTImageAnalyzer:
                 axes[1].set_title('Transformed: Y[k]', fontsize=12, fontweight='bold')
                 axes[1].grid(True, alpha=0.3)
             else:
-                fig = plt.figure(figsize=(18, 12))
-                fig.suptitle(f'{lambda_name}\nTest Signal: f(k) = 1/(k+1), N={self.N}', 
-                            fontsize=14, fontweight='bold')
+                fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+                # fig.suptitle(f'{lambda_name}\nTest Signal: f(k) = 1/(k+1), N={self.N}', 
+                #             fontsize=14, fontweight='bold')
                 
-                gs = fig.add_gridspec(2, 3, hspace=0.3, wspace=0.3)
+                axes[0].plot(k, test_signal, 'k-', linewidth=2.5)
+                axes[0].scatter(k, test_signal, c='black', s=30, alpha=0.6, zorder=3)
+                axes[0].set_xlabel('k', fontsize=11)
+                axes[0].set_ylabel('Amplitude', fontsize=11)
+                axes[0].set_title('Input: f(k) = 1/(k+1)', fontsize=12, fontweight='bold')
+                axes[0].grid(True, alpha=0.3)
                 
-                ax1 = fig.add_subplot(gs[0, 0])
-                ax1.plot(k, test_signal, 'k-', linewidth=2.5)
-                ax1.scatter(k, test_signal, c='black', s=30, alpha=0.6, zorder=3)
-                ax1.set_xlabel('k', fontsize=11)
-                ax1.set_ylabel('Amplitude', fontsize=11)
-                ax1.set_title('Input: f(k) = 1/(k+1)', fontsize=12, fontweight='bold')
-                ax1.grid(True, alpha=0.3)
-                
-                ax2 = fig.add_subplot(gs[0, 1:])
-                ax2.plot(k, magnitude, 'g-', linewidth=2.5)
-                ax2.scatter(k, magnitude, c='green', s=30, alpha=0.6, zorder=3)
-                ax2.set_xlabel('k', fontsize=11)
-                ax2.set_ylabel('Magnitude', fontsize=11)
-                ax2.set_title('Magnitude: |Y[k]|', fontsize=12, fontweight='bold')
-                ax2.grid(True, alpha=0.3)
-                
-                ax3 = fig.add_subplot(gs[1, 0])
-                ax3.plot(k, real_part, 'b-', linewidth=2.5)
-                ax3.scatter(k, real_part, c='blue', s=30, alpha=0.6, zorder=3)
-                ax3.axhline(y=0, color='gray', linestyle='--', alpha=0.5)
-                ax3.set_xlabel('k', fontsize=11)
-                ax3.set_ylabel('Real Part', fontsize=11)
-                ax3.set_title('Real: Re{Y[k]}', fontsize=12, fontweight='bold')
-                ax3.grid(True, alpha=0.3)
-                
-                ax4 = fig.add_subplot(gs[1, 1])
-                ax4.plot(k, imag_part, 'r-', linewidth=2.5)
-                ax4.scatter(k, imag_part, c='red', s=30, alpha=0.6, zorder=3)
-                ax4.axhline(y=0, color='gray', linestyle='--', alpha=0.5)
-                ax4.set_xlabel('k', fontsize=11)
-                ax4.set_ylabel('Imaginary Part', fontsize=11)
-                ax4.set_title('Imaginary: Im{Y[k]}', fontsize=12, fontweight='bold')
-                ax4.grid(True, alpha=0.3)
-                
-                ax5 = fig.add_subplot(gs[1, 2])
-                ax5.plot(k, phase, 'm-', linewidth=2.5)
-                ax5.scatter(k, phase, c='magenta', s=30, alpha=0.6, zorder=3)
-                ax5.axhline(y=0, color='gray', linestyle='--', alpha=0.5)
-                ax5.set_xlabel('k', fontsize=11)
-                ax5.set_ylabel('Phase (radians)', fontsize=11)
-                ax5.set_title('Phase: ∠Y[k]', fontsize=12, fontweight='bold')
-                ax5.grid(True, alpha=0.3)
-                ax5.set_ylim([-np.pi - 0.5, np.pi + 0.5])
+                axes[1].plot(k, real_part, 'purple', linewidth=2.5)
+                axes[1].scatter(k, real_part, c='purple', s=30, alpha=0.6, zorder=3)
+                axes[1].axhline(y=0, color='gray', linestyle='--', alpha=0.5)
+                axes[1].set_xlabel('k', fontsize=11)
+                axes[1].set_ylabel('Amplitude', fontsize=11)
+                axes[1].set_title('Transformed: Y[k]', fontsize=12, fontweight='bold')
+                axes[1].grid(True, alpha=0.3)
             
             plt.tight_layout(rect=[0, 0, 1, 0.96])
             
@@ -1241,68 +1136,25 @@ class MDFKTImageAnalyzer:
             print(f"  Magnitude range: [{magnitude.min():.6f}, {magnitude.max():.6f}]")
             print(f"  Energy: {np.sum(magnitude**2):.6f}")
             
-            # Always use complex layout since input is complex
-            fig = plt.figure(figsize=(18, 12))
-            fig.suptitle(f'{lambda_name}\nTest Signal: f(k) = exp(i·k·π/N), N={self.N}', 
-                        fontsize=14, fontweight='bold')
+            # Plot input and transformed signals only
+            fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+            # fig.suptitle(f'{lambda_name}\nTest Signal: f(k) = exp(i·k·π/N), N={self.N}', 
+            #             fontsize=14, fontweight='bold')
             
-            gs = fig.add_gridspec(2, 3, hspace=0.3, wspace=0.3)
+            axes[0].plot(k, np.abs(test_signal), 'k-', linewidth=2.5)
+            axes[0].scatter(k, np.abs(test_signal), c='black', s=30, alpha=0.6, zorder=3)
+            axes[0].set_xlabel('k', fontsize=11)
+            axes[0].set_ylabel('Amplitude', fontsize=11)
+            axes[0].set_title('Input: f(k) = exp(i·k·π/N)', fontsize=12, fontweight='bold')
+            axes[0].grid(True, alpha=0.3)
             
-            # Plot 1: Input Signal Magnitude
-            ax1 = fig.add_subplot(gs[0, 0])
-            ax1.plot(k, np.abs(test_signal), 'k-', linewidth=2.5, label='|f(k)|')
-            ax1.scatter(k, np.abs(test_signal), c='black', s=30, alpha=0.6, zorder=3)
-            ax1.set_xlabel('k', fontsize=11)
-            ax1.set_ylabel('Magnitude', fontsize=11)
-            ax1.set_title('Input Magnitude: |f(k)| = 1', fontsize=12, fontweight='bold')
-            ax1.grid(True, alpha=0.3)
-            ax1.legend(fontsize=10)
-            
-            # Plot 2: Output Magnitude
-            ax2 = fig.add_subplot(gs[0, 1:])
-            ax2.plot(k, magnitude, 'g-', linewidth=2.5, label='|Y[k]|')
-            ax2.scatter(k, magnitude, c='green', s=30, alpha=0.6, zorder=3)
-            ax2.set_xlabel('k', fontsize=11)
-            ax2.set_ylabel('Magnitude', fontsize=11)
-            ax2.set_title('Output Magnitude: |Y[k]|', fontsize=12, fontweight='bold')
-            ax2.grid(True, alpha=0.3)
-            ax2.legend(fontsize=10)
-            
-            # Plot 3: Real Part
-            ax3 = fig.add_subplot(gs[1, 0])
-            ax3.plot(k, real_part, 'b-', linewidth=2.5, label='Re{Y[k]}')
-            ax3.scatter(k, real_part, c='blue', s=30, alpha=0.6, zorder=3)
-            ax3.axhline(y=0, color='gray', linestyle='--', alpha=0.5)
-            ax3.set_xlabel('k', fontsize=11)
-            ax3.set_ylabel('Real Part', fontsize=11)
-            ax3.set_title('Real: Re{Y[k]}', fontsize=12, fontweight='bold')
-            ax3.grid(True, alpha=0.3)
-            ax3.legend(fontsize=10)
-            
-            # Plot 4: Imaginary Part
-            ax4 = fig.add_subplot(gs[1, 1])
-            ax4.plot(k, imag_part, 'r-', linewidth=2.5, label='Im{Y[k]}')
-            ax4.scatter(k, imag_part, c='red', s=30, alpha=0.6, zorder=3)
-            ax4.axhline(y=0, color='gray', linestyle='--', alpha=0.5)
-            ax4.set_xlabel('k', fontsize=11)
-            ax4.set_ylabel('Imaginary Part', fontsize=11)
-            ax4.set_title('Imaginary: Im{Y[k]}', fontsize=12, fontweight='bold')
-            ax4.grid(True, alpha=0.3)
-            ax4.legend(fontsize=10)
-            
-            # Plot 5: Phase
-            ax5 = fig.add_subplot(gs[1, 2])
-            ax5.plot(k, phase, 'm-', linewidth=2.5, label='∠Y[k]')
-            ax5.scatter(k, phase, c='magenta', s=30, alpha=0.6, zorder=3)
-            ax5.axhline(y=0, color='gray', linestyle='--', alpha=0.5)
-            ax5.axhline(y=np.pi, color='gray', linestyle=':', alpha=0.5)
-            ax5.axhline(y=-np.pi, color='gray', linestyle=':', alpha=0.5)
-            ax5.set_xlabel('k', fontsize=11)
-            ax5.set_ylabel('Phase (radians)', fontsize=11)
-            ax5.set_title('Phase: ∠Y[k]', fontsize=12, fontweight='bold')
-            ax5.grid(True, alpha=0.3)
-            ax5.legend(fontsize=10)
-            ax5.set_ylim([-np.pi - 0.5, np.pi + 0.5])
+            axes[1].plot(k, real_part, 'purple', linewidth=2.5)
+            axes[1].scatter(k, real_part, c='purple', s=30, alpha=0.6, zorder=3)
+            axes[1].axhline(y=0, color='gray', linestyle='--', alpha=0.5)
+            axes[1].set_xlabel('k', fontsize=11)
+            axes[1].set_ylabel('Amplitude', fontsize=11)
+            axes[1].set_title('Transformed: Y[k]', fontsize=12, fontweight='bold')
+            axes[1].grid(True, alpha=0.3)
             
             plt.tight_layout(rect=[0, 0, 1, 0.96])
             
