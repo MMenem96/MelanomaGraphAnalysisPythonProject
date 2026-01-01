@@ -15,7 +15,7 @@ class MDFKTImageAnalyzer:
     """
     
 
-    def __init__(self, N: int = 64, p: float = 0.5):
+    def __init__(self, N: int = 128, p: float = 0.5):
         """
         Initialize the MDFKT analyzer.
         
