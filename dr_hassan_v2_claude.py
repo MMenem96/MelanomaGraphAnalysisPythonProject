@@ -15,7 +15,7 @@ class MDFKTImageAnalyzer:
     """
     
 
-    def __init__(self, N: int = 64, p: float = 0.5, lambda_method: str = 'odd_harmonics'):
+    def __init__(self, N: int = 64, p: float = 0.5, lambda_method: str = 'inverse_reciprocal'):
         """
         Initialize the MDFKT analyzer.
         
@@ -262,11 +262,12 @@ class MDFKTImageAnalyzer:
         Returns:
             Dictionary of features with channel prefix
         """
-        # Extract components as per your requirements
+        # Extract components
         real_part = Y.real
-        imag_part = Y.imag
         magnitude = np.abs(Y)
-        phase = np.angle(Y)
+        
+        # Check if lambda is imaginary (has non-zero imaginary component)
+        has_imaginary_lambda = np.any(self.Lambda.imag != 0)
         
         features = {
             # Real part statistics
@@ -275,23 +276,30 @@ class MDFKTImageAnalyzer:
             f'{channel_name}_real_max': np.max(real_part),
             f'{channel_name}_real_min': np.min(real_part),
             
-            # Imaginary part statistics
-            f'{channel_name}_imag_mean': np.mean(imag_part),
-            f'{channel_name}_imag_std': np.std(imag_part),
-            f'{channel_name}_imag_max': np.max(imag_part),
-            f'{channel_name}_imag_min': np.min(imag_part),
-            
             # Magnitude (Abs) statistics
             f'{channel_name}_magnitude_mean': np.mean(magnitude),
             f'{channel_name}_magnitude_std': np.std(magnitude),
             f'{channel_name}_magnitude_max': np.max(magnitude),
             f'{channel_name}_magnitude_energy': np.sum(magnitude**2),
-            
-            # Phase statistics
-            f'{channel_name}_phase_mean': np.mean(phase),
-            f'{channel_name}_phase_std': np.std(phase),
-            f'{channel_name}_phase_range': np.max(phase) - np.min(phase),
         }
+        
+        # Only add imaginary and phase features if lambda is imaginary
+        if has_imaginary_lambda:
+            imag_part = Y.imag
+            phase = np.angle(Y)
+            
+            features.update({
+                # Imaginary part statistics
+                f'{channel_name}_imag_mean': np.mean(imag_part),
+                f'{channel_name}_imag_std': np.std(imag_part),
+                f'{channel_name}_imag_max': np.max(imag_part),
+                f'{channel_name}_imag_min': np.min(imag_part),
+                
+                # Phase statistics
+                f'{channel_name}_phase_mean': np.mean(phase),
+                f'{channel_name}_phase_std': np.std(phase),
+                f'{channel_name}_phase_range': np.max(phase) - np.min(phase),
+            })
         
         return features
     
@@ -324,9 +332,7 @@ class MDFKTImageAnalyzer:
             'original_image': img_original,
             'normalized_image': img_normalized,
             'mdfkt_coefficients': {},
-            'reconstructed_images': {},
-            'features': {},
-            'reconstruction_errors': {}
+            'features': {}
         }
         
         all_features = {}
@@ -343,16 +349,6 @@ class MDFKTImageAnalyzer:
             Y = self.apply_2D_MDFKT(f_channel)
             results['mdfkt_coefficients'][channel_name] = Y
             
-            # Reconstruct
-            print(f"Reconstructing {channel_name} channel...")
-            f_rec = self.inverse_2D_MDFKT(Y)
-            results['reconstructed_images'][channel_name] = f_rec.real
-            
-            # Calculate reconstruction error
-            reconstruction_error = np.max(np.abs(f_channel - f_rec.real))
-            results['reconstruction_errors'][channel_name] = reconstruction_error
-            print(f"Reconstruction error ({channel_name}): {reconstruction_error:.6e}")
-            
             # Extract features
             channel_features = self.extract_channel_features(Y, channel_name)
             all_features.update(channel_features)
@@ -368,9 +364,7 @@ class MDFKTImageAnalyzer:
         
         # Display summary
         print("\n" + "="*70)
-        print("SUMMARY - Reconstruction Errors:")
-        for ch in channels:
-            print(f"  {ch}: {results['reconstruction_errors'][ch]:.6e}")
+        print("FEATURE EXTRACTION COMPLETE")
         print("="*70)
         
         # Save visualizations
@@ -388,75 +382,80 @@ class MDFKTImageAnalyzer:
         """Save comprehensive visualization plots for all channels."""
         img_original = results['original_image']
         
+        # Check if lambda is imaginary to determine which visualizations to show
+        has_imaginary_lambda = np.any(self.Lambda.imag != 0)
+        
         # ========== FIGURE 1: Combined view of all channels ==========
-        fig = plt.figure(figsize=(20, 15))
+        if has_imaginary_lambda:
+            fig = plt.figure(figsize=(16, 12))
+            subplot_layout = (3, 4)  # 3 rows, 4 columns for R, G, B with imag and phase
+        else:
+            fig = plt.figure(figsize=(12, 9))
+            subplot_layout = (3, 3)  # 3 rows, 3 columns for R, G, B without imag and phase
+        
         fig.suptitle(f'MDFKT Analysis: {Path(image_path).name}', fontsize=16, fontweight='bold')
         
         channels = ['R', 'G', 'B']
         
         for idx, channel_name in enumerate(channels):
             Y = results['mdfkt_coefficients'][channel_name]
-            f_rec = results['reconstructed_images'][channel_name]
-            error = results['reconstruction_errors'][channel_name]
             
-            row = idx * 2
+            if has_imaginary_lambda:
+                # With imaginary lambda: show original, real, imaginary, magnitude
+                base_idx = idx * 4
+                
+                # Original channel
+                plt.subplot(3, 4, base_idx + 1)
+                plt.imshow(results['normalized_image'][:, :, idx], cmap='viridis', origin='lower', vmin=0, vmax=1)
+                plt.title(f'{channel_name} - Original')
+                plt.colorbar()
+                plt.axis('off')
+                
+                # Real part
+                plt.subplot(3, 4, base_idx + 2)
+                plt.imshow(Y.real, cmap='viridis', origin='lower')
+                plt.title(f'{channel_name} - Real')
+                plt.colorbar()
+                plt.axis('off')
+                
+                # Imaginary part
+                plt.subplot(3, 4, base_idx + 3)
+                plt.imshow(Y.imag, cmap='plasma', origin='lower')
+                plt.title(f'{channel_name} - Imaginary')
+                plt.colorbar()
+                plt.axis('off')
+                
+                # Magnitude
+                plt.subplot(3, 4, base_idx + 4)
+                plt.imshow(np.abs(Y), cmap='magma', origin='lower')
+                plt.title(f'{channel_name} - Magnitude')
+                plt.colorbar()
+                plt.axis('off')
+            else:
+                # Without imaginary lambda: show original, real, magnitude only
+                base_idx = idx * 3
+                
+                # Original channel
+                plt.subplot(3, 3, base_idx + 1)
+                plt.imshow(results['normalized_image'][:, :, idx], cmap='viridis', origin='lower', vmin=0, vmax=1)
+                plt.title(f'{channel_name} - Original')
+                plt.colorbar()
+                plt.axis('off')
+                
+                # Real part
+                plt.subplot(3, 3, base_idx + 2)
+                plt.imshow(Y.real, cmap='viridis', origin='lower')
+                plt.title(f'{channel_name} - Real')
+                plt.colorbar()
+                plt.axis('off')
+                
+                # Magnitude
+                plt.subplot(3, 3, base_idx + 3)
+                plt.imshow(np.abs(Y), cmap='magma', origin='lower')
+                plt.title(f'{channel_name} - Magnitude')
+                plt.colorbar()
+                plt.axis('off')
             
-            # Original channel
-            plt.subplot(6, 4, row*4 + 1)
-            plt.imshow(results['normalized_image'][:, :, idx], cmap='viridis', origin='lower', vmin=0, vmax=1)
-            plt.title(f'{channel_name} - Original')
-            plt.colorbar()
-            plt.axis('off')
-            
-            # Reconstructed channel
-            plt.subplot(6, 4, row*4 + 2)
-            plt.imshow(f_rec, cmap='viridis', origin='lower', vmin=0, vmax=1)
-            plt.title(f'{channel_name} - Reconstructed\nError: {error:.2e}')
-            plt.colorbar()
-            plt.axis('off')
-            
-            # Magnitude
-            plt.subplot(6, 4, row*4 + 3)
-            plt.imshow(np.abs(Y), cmap='magma', origin='lower')
-            plt.title(f'{channel_name} - Magnitude')
-            plt.colorbar()
-            plt.axis('off')
-            
-            # Phase
-            plt.subplot(6, 4, row*4 + 4)
-            plt.imshow(np.angle(Y), cmap='twilight', origin='lower')
-            plt.title(f'{channel_name} - Phase')
-            plt.colorbar()
-            plt.axis('off')
-            
-            # Real part
-            plt.subplot(6, 4, row*4 + 5)
-            plt.imshow(Y.real, cmap='viridis', origin='lower')
-            plt.title(f'{channel_name} - Real Part')
-            plt.colorbar()
-            plt.axis('off')
-            
-            # Imaginary part
-            plt.subplot(6, 4, row*4 + 6)
-            plt.imshow(Y.imag, cmap='plasma', origin='lower')
-            plt.title(f'{channel_name} - Imaginary Part')
-            plt.colorbar()
-            plt.axis('off')
-            
-            # Log Magnitude
-            plt.subplot(6, 4, row*4 + 7)
-            plt.imshow(np.log1p(np.abs(Y)), cmap='inferno', origin='lower')
-            plt.title(f'{channel_name} - Log Magnitude')
-            plt.colorbar()
-            plt.axis('off')
-            
-            # Phase histogram
-            plt.subplot(6, 4, row*4 + 8)
-            plt.hist(np.angle(Y).flatten(), bins=50, color=channel_name.lower(), alpha=0.7, edgecolor='black')
-            plt.title(f'{channel_name} - Phase Distribution')
-            plt.xlabel('Phase (radians)')
-            plt.ylabel('Frequency')
-            plt.grid(True, alpha=0.3)
         
         plt.tight_layout(rect=[0, 0.03, 1, 0.97])
         output_path = Path(output_dir) / f"{Path(image_path).stem}_mdfkt_full_analysis.png"
@@ -466,56 +465,64 @@ class MDFKTImageAnalyzer:
         plt.close()
         
         # ========== FIGURE 2: RGB Composite ==========
-        fig2, axes = plt.subplots(2, 4, figsize=(16, 8))
-        fig2.suptitle('RGB Composite Views', fontsize=14, fontweight='bold')
-        
-        # Original RGB
-        axes[0, 0].imshow(img_original)
-        axes[0, 0].set_title('Original RGB')
-        axes[0, 0].axis('off')
-        
-        # Reconstructed RGB
-        rec_rgb = np.stack([results['reconstructed_images'][ch] for ch in channels], axis=2)
-        rec_rgb = np.clip(rec_rgb, 0, 1)
-        axes[0, 1].imshow(rec_rgb)
-        axes[0, 1].set_title('Reconstructed RGB')
-        axes[0, 1].axis('off')
-        
-        # Combined magnitude
-        mag_r = np.abs(results['mdfkt_coefficients']['R'])
-        mag_g = np.abs(results['mdfkt_coefficients']['G'])
-        mag_b = np.abs(results['mdfkt_coefficients']['B'])
-        
-        mag_r_norm = (mag_r - mag_r.min()) / (mag_r.max() - mag_r.min() + 1e-10)
-        mag_g_norm = (mag_g - mag_g.min()) / (mag_g.max() - mag_g.min() + 1e-10)
-        mag_b_norm = (mag_b - mag_b.min()) / (mag_b.max() - mag_b.min() + 1e-10)
-        
-        mag_combined = np.stack([mag_r_norm, mag_g_norm, mag_b_norm], axis=2)
-        axes[0, 2].imshow(mag_combined)
-        axes[0, 2].set_title('Combined Magnitude (RGB)')
-        axes[0, 2].axis('off')
-        
-        # Combined phase
-        phase_combined = np.stack([np.angle(results['mdfkt_coefficients'][ch]) for ch in channels], axis=2)
-        phase_normalized = (phase_combined + np.pi) / (2 * np.pi)
-        axes[0, 3].imshow(phase_normalized)
-        axes[0, 3].set_title('Combined Phase (RGB)')
-        axes[0, 3].axis('off')
-        
-        # Individual channel magnitudes
-        for idx, ch in enumerate(channels):
-            mag = np.abs(results['mdfkt_coefficients'][ch])
-            axes[1, idx].imshow(mag, cmap='hot')
-            axes[1, idx].set_title(f'{ch} Magnitude')
-            axes[1, idx].axis('off')
-        
-        # Error visualization
-        error_map = np.stack([np.abs(results['normalized_image'][:,:,i] - results['reconstructed_images'][ch]) 
-                            for i, ch in enumerate(channels)], axis=2)
-        error_amplified = np.clip(error_map * 10, 0, 1)
-        axes[1, 3].imshow(error_amplified)
-        axes[1, 3].set_title('Reconstruction Error (×10)')
-        axes[1, 3].axis('off')
+        if has_imaginary_lambda:
+            fig2, axes = plt.subplots(2, 3, figsize=(12, 8))
+            fig2.suptitle('RGB Composite Views', fontsize=14, fontweight='bold')
+            
+            # Original RGB
+            axes[0, 0].imshow(img_original)
+            axes[0, 0].set_title('Original RGB')
+            axes[0, 0].axis('off')
+            
+            # Combined magnitude
+            mag_r = np.abs(results['mdfkt_coefficients']['R'])
+            mag_g = np.abs(results['mdfkt_coefficients']['G'])
+            mag_b = np.abs(results['mdfkt_coefficients']['B'])
+            
+            mag_r_norm = (mag_r - mag_r.min()) / (mag_r.max() - mag_r.min() + 1e-10)
+            mag_g_norm = (mag_g - mag_g.min()) / (mag_g.max() - mag_g.min() + 1e-10)
+            mag_b_norm = (mag_b - mag_b.min()) / (mag_b.max() - mag_b.min() + 1e-10)
+            
+            mag_combined = np.stack([mag_r_norm, mag_g_norm, mag_b_norm], axis=2)
+            axes[0, 1].imshow(mag_combined)
+            axes[0, 1].set_title('Combined Magnitude (RGB)')
+            axes[0, 1].axis('off')
+            
+            # Combined phase
+            phase_combined = np.stack([np.angle(results['mdfkt_coefficients'][ch]) for ch in channels], axis=2)
+            phase_normalized = (phase_combined + np.pi) / (2 * np.pi)
+            axes[0, 2].imshow(phase_normalized)
+            axes[0, 2].set_title('Combined Phase (RGB)')
+            axes[0, 2].axis('off')
+            
+            # Individual channel magnitudes
+            for idx, ch in enumerate(channels):
+                mag = np.abs(results['mdfkt_coefficients'][ch])
+                axes[1, idx].imshow(mag, cmap='hot')
+                axes[1, idx].set_title(f'{ch} Magnitude')
+                axes[1, idx].axis('off')
+        else:
+            fig2, axes = plt.subplots(1, 2, figsize=(10, 5))
+            fig2.suptitle('RGB Composite Views', fontsize=14, fontweight='bold')
+            
+            # Original RGB
+            axes[0].imshow(img_original)
+            axes[0].set_title('Original RGB')
+            axes[0].axis('off')
+            
+            # Combined magnitude
+            mag_r = np.abs(results['mdfkt_coefficients']['R'])
+            mag_g = np.abs(results['mdfkt_coefficients']['G'])
+            mag_b = np.abs(results['mdfkt_coefficients']['B'])
+            
+            mag_r_norm = (mag_r - mag_r.min()) / (mag_r.max() - mag_r.min() + 1e-10)
+            mag_g_norm = (mag_g - mag_g.min()) / (mag_g.max() - mag_g.min() + 1e-10)
+            mag_b_norm = (mag_b - mag_b.min()) / (mag_b.max() - mag_b.min() + 1e-10)
+            
+            mag_combined = np.stack([mag_r_norm, mag_g_norm, mag_b_norm], axis=2)
+            axes[1].imshow(mag_combined)
+            axes[1].set_title('Combined Magnitude (RGB)')
+            axes[1].axis('off')
         
         plt.tight_layout()
         output_path2 = Path(output_dir) / f"{Path(image_path).stem}_mdfkt_rgb_composite.png"
@@ -528,79 +535,75 @@ class MDFKTImageAnalyzer:
         for idx, channel_name in enumerate(channels):
             Y = results['mdfkt_coefficients'][channel_name]
             f_original = results['normalized_image'][:, :, idx]
-            f_rec = results['reconstructed_images'][channel_name]
-            error = results['reconstruction_errors'][channel_name]
             
-            # Create figure with 2 rows × 3 columns
-            fig_ch, axes_ch = plt.subplots(2, 3, figsize=(20, 10))
-            fig_ch.suptitle(f'MDFKT Analysis - {channel_name} Channel: {Path(image_path).name}', 
-                           fontsize=16, fontweight='bold', y=0.98)
             
-            # Row 1, Col 1: Original
-            im1 = axes_ch[0, 0].imshow(f_original, cmap='viridis', origin='lower', vmin=0, vmax=1)
-            axes_ch[0, 0].set_title(f'{channel_name} - Original', fontsize=12, fontweight='bold')
-            axes_ch[0, 0].axis('off')
-            plt.colorbar(im1, ax=axes_ch[0, 0], fraction=0.046, pad=0.04)
-            
-            # Row 1, Col 2: Reconstructed
-            im2 = axes_ch[0, 1].imshow(f_rec, cmap='viridis', origin='lower', vmin=0, vmax=1)
-            axes_ch[0, 1].set_title(f'{channel_name} - Reconstructed', 
-                                   fontsize=12, fontweight='bold')
-            axes_ch[0, 1].axis('off')
-            plt.colorbar(im2, ax=axes_ch[0, 1], fraction=0.046, pad=0.04)
-            
-            # Row 1, Col 3: Log Magnitude - USE PERCENTILE FOR BETTER CONTRAST
-            log_mag = np.log1p(np.abs(Y))
-            im3 = axes_ch[0, 2].imshow(log_mag, cmap='inferno', origin='lower',
-                                    vmin=np.percentile(log_mag, 1),
-                                    vmax=np.percentile(log_mag, 99))
-            axes_ch[0, 2].set_title(f'{channel_name} - Log Magnitude', fontsize=12, fontweight='bold')
-            axes_ch[0, 2].axis('off')
-            plt.colorbar(im3, ax=axes_ch[0, 2], fraction=0.046, pad=0.04)
-
-
-            # # Row 1, Col 3: Magnitude
-            # im3 = axes_ch[0, 2].imshow(np.abs(Y), cmap='magma', origin='lower')
-            # axes_ch[0, 2].set_title(f'{channel_name} - Magnitude', fontsize=12, fontweight='bold')
-            # axes_ch[0, 2].axis('off')
-            # plt.colorbar(im3, ax=axes_ch[0, 2], fraction=0.046, pad=0.04)
-            
-            # # Row 1, Col 4: Log Magnitude
-            # im4 = axes_ch[0, 3].imshow(np.log1p(np.abs(Y)), cmap='inferno', origin='lower')
-            # axes_ch[0, 3].set_title(f'{channel_name} - Log Magnitude', fontsize=12, fontweight='bold')
-            # axes_ch[0, 3].axis('off')
-            # plt.colorbar(im4, ax=axes_ch[0, 3], fraction=0.046, pad=0.04)
-            
-            # Row 2, Col 1: Real Part - USE PERCENTILE CLIPPING
-            im5 = axes_ch[1, 0].imshow(Y.real, cmap='viridis', origin='lower',
-                                    vmin=np.percentile(Y.real, 2),
-                                    vmax=np.percentile(Y.real, 98))
-            axes_ch[1, 0].set_title(f'{channel_name} - Real Part', fontsize=12, fontweight='bold')
-            axes_ch[1, 0].axis('off')
-            plt.colorbar(im5, ax=axes_ch[1, 0], fraction=0.046, pad=0.04)
-            
-            # Row 2, Col 2: Imaginary Part - USE SYMMETRIC PERCENTILE
-            imag_abs_max = np.percentile(np.abs(Y.imag), 98)
-            im6 = axes_ch[1, 1].imshow(Y.imag, cmap='plasma', origin='lower',
-                                    vmin=-imag_abs_max, vmax=imag_abs_max)
-            axes_ch[1, 1].set_title(f'{channel_name} - Imaginary Part', fontsize=12, fontweight='bold')
-            axes_ch[1, 1].axis('off')
-            plt.colorbar(im6, ax=axes_ch[1, 1], fraction=0.046, pad=0.04)
-            
-            # Row 2, Col 3: Phase
-            im7 = axes_ch[1, 2].imshow(np.angle(Y), cmap='twilight', origin='lower', vmin=-np.pi, vmax=np.pi)
-            axes_ch[1, 2].set_title(f'{channel_name} - Phase', fontsize=12, fontweight='bold')
-            axes_ch[1, 2].axis('off')
-            plt.colorbar(im7, ax=axes_ch[1, 2], fraction=0.046, pad=0.04)
-            
-            # # Row 2, Col 4: Phase Histogram
-            # axes_ch[1, 3].hist(np.angle(Y).flatten(), bins=50, color=channel_name.lower(), 
-            #                   alpha=0.7, edgecolor='black', linewidth=1.2)
-            # axes_ch[1, 3].set_title(f'{channel_name} - Phase Distribution', fontsize=12, fontweight='bold')
-            # axes_ch[1, 3].set_xlabel('Phase (radians)', fontsize=10)
-            # axes_ch[1, 3].set_ylabel('Frequency', fontsize=10)
-            # axes_ch[1, 3].grid(True, alpha=0.3, linestyle='--')
-            # axes_ch[1, 3].set_xlim([-np.pi, np.pi])
+            # Create figure based on lambda type
+            if has_imaginary_lambda:
+                fig_ch, axes_ch = plt.subplots(2, 3, figsize=(15, 10))
+                fig_ch.suptitle(f'MDFKT Analysis - {channel_name} Channel: {Path(image_path).name}', 
+                               fontsize=16, fontweight='bold', y=0.98)
+                
+                # Row 1, Col 1: Original
+                im1 = axes_ch[0, 0].imshow(f_original, cmap='viridis', origin='lower', vmin=0, vmax=1)
+                axes_ch[0, 0].set_title(f'{channel_name} - Original', fontsize=12, fontweight='bold')
+                axes_ch[0, 0].axis('off')
+                plt.colorbar(im1, ax=axes_ch[0, 0], fraction=0.046, pad=0.04)
+                
+                # Row 1, Col 2: Magnitude
+                im2 = axes_ch[0, 1].imshow(np.abs(Y), cmap='magma', origin='lower')
+                axes_ch[0, 1].set_title(f'{channel_name} - Magnitude', fontsize=12, fontweight='bold')
+                axes_ch[0, 1].axis('off')
+                plt.colorbar(im2, ax=axes_ch[0, 1], fraction=0.046, pad=0.04)
+                
+                # Row 1, Col 3: Real Part
+                im3 = axes_ch[0, 2].imshow(Y.real, cmap='viridis', origin='lower',
+                                        vmin=np.percentile(Y.real, 2),
+                                        vmax=np.percentile(Y.real, 98))
+                axes_ch[0, 2].set_title(f'{channel_name} - Real Part', fontsize=12, fontweight='bold')
+                axes_ch[0, 2].axis('off')
+                plt.colorbar(im3, ax=axes_ch[0, 2], fraction=0.046, pad=0.04)
+                
+                # Row 2, Col 1: Imaginary Part
+                imag_abs_max = np.percentile(np.abs(Y.imag), 98)
+                im4 = axes_ch[1, 0].imshow(Y.imag, cmap='plasma', origin='lower',
+                                        vmin=-imag_abs_max, vmax=imag_abs_max)
+                axes_ch[1, 0].set_title(f'{channel_name} - Imaginary Part', fontsize=12, fontweight='bold')
+                axes_ch[1, 0].axis('off')
+                plt.colorbar(im4, ax=axes_ch[1, 0], fraction=0.046, pad=0.04)
+                
+                # Row 2, Col 2: Phase
+                im5 = axes_ch[1, 1].imshow(np.angle(Y), cmap='twilight', origin='lower', vmin=-np.pi, vmax=np.pi)
+                axes_ch[1, 1].set_title(f'{channel_name} - Phase', fontsize=12, fontweight='bold')
+                axes_ch[1, 1].axis('off')
+                plt.colorbar(im5, ax=axes_ch[1, 1], fraction=0.046, pad=0.04)
+                
+                # Row 2, Col 3: Empty (or could add another metric)
+                axes_ch[1, 2].axis('off')
+            else:
+                # Without imaginary lambda: only show original, magnitude, real
+                fig_ch, axes_ch = plt.subplots(1, 3, figsize=(15, 5))
+                fig_ch.suptitle(f'MDFKT Analysis - {channel_name} Channel: {Path(image_path).name}', 
+                               fontsize=16, fontweight='bold', y=0.98)
+                
+                # Col 1: Original
+                im1 = axes_ch[0].imshow(f_original, cmap='viridis', origin='lower', vmin=0, vmax=1)
+                axes_ch[0].set_title(f'{channel_name} - Original', fontsize=12, fontweight='bold')
+                axes_ch[0].axis('off')
+                plt.colorbar(im1, ax=axes_ch[0], fraction=0.046, pad=0.04)
+                
+                # Col 2: Magnitude
+                im2 = axes_ch[1].imshow(np.abs(Y), cmap='magma', origin='lower')
+                axes_ch[1].set_title(f'{channel_name} - Magnitude', fontsize=12, fontweight='bold')
+                axes_ch[1].axis('off')
+                plt.colorbar(im2, ax=axes_ch[1], fraction=0.046, pad=0.04)
+                
+                # Col 3: Real Part
+                im3 = axes_ch[2].imshow(Y.real, cmap='viridis', origin='lower',
+                                        vmin=np.percentile(Y.real, 2),
+                                        vmax=np.percentile(Y.real, 98))
+                axes_ch[2].set_title(f'{channel_name} - Real Part', fontsize=12, fontweight='bold')
+                axes_ch[2].axis('off')
+                plt.colorbar(im3, ax=axes_ch[2], fraction=0.046, pad=0.04)
             
             plt.tight_layout(rect=[0, 0, 1, 0.96])
             
@@ -708,76 +711,30 @@ class MDFKTImageAnalyzer:
             # ========== CREATE SEPARATE FIGURE FOR THIS LAMBDA ==========
             # Determine number of subplots based on whether transformed is real or complex
             if is_transformed_real:
-                # Real transformed: show Input, Transformed, Magnitude, Real Part, and Phase (5 plots)
-                fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+                # Real transformed: show only Input and Transformed (2 plots)
+                fig, axes = plt.subplots(1, 2, figsize=(12, 5))
                 fig.suptitle(f'{lambda_name}\nTest Signal: f(k) = cos(π·k/N), N={self.N}', 
                             fontsize=14, fontweight='bold')
                 
                 # Plot 1: Input Signal
-                axes[0, 0].plot(k, test_signal, 'k-', linewidth=2.5, label='Input Signal')
-                axes[0, 0].scatter(k, test_signal, c='black', s=30, alpha=0.6, zorder=3)
-                axes[0, 0].axhline(y=0, color='gray', linestyle='--', alpha=0.5)
-                axes[0, 0].set_xlabel('k (sample index)', fontsize=11)
-                axes[0, 0].set_ylabel('Amplitude', fontsize=11)
-                axes[0, 0].set_title('Input: f(k) = cos(π·k/N)', fontsize=12, fontweight='bold')
-                axes[0, 0].grid(True, alpha=0.3)
-                axes[0, 0].legend(fontsize=10)
+                axes[0].plot(k, test_signal, 'k-', linewidth=2.5, label='Input Signal')
+                axes[0].scatter(k, test_signal, c='black', s=30, alpha=0.6, zorder=3)
+                axes[0].axhline(y=0, color='gray', linestyle='--', alpha=0.5)
+                axes[0].set_xlabel('k (sample index)', fontsize=11)
+                axes[0].set_ylabel('Amplitude', fontsize=11)
+                axes[0].set_title('Input: f(k) = cos(π·k/N)', fontsize=12, fontweight='bold')
+                axes[0].grid(True, alpha=0.3)
+                axes[0].legend(fontsize=10)
                 
-                # Plot 2: Transformed Signal (REAL VALUES ONLY!)
-                axes[0, 1].plot(k, real_part, 'purple', linewidth=2.5, label='Y[k] (Transformed)')
-                axes[0, 1].scatter(k, real_part, c='purple', s=30, alpha=0.6, zorder=3)
-                axes[0, 1].axhline(y=0, color='gray', linestyle='--', alpha=0.5)
-                axes[0, 1].fill_between(k, 0, real_part, alpha=0.2, color='purple')
-                axes[0, 1].set_xlabel('k (frequency index)', fontsize=11)
-                axes[0, 1].set_ylabel('Amplitude', fontsize=11)
-                axes[0, 1].set_title('Transformed Signal: Y[k]', fontsize=12, fontweight='bold')
-                axes[0, 1].grid(True, alpha=0.3)
-                axes[0, 1].legend(fontsize=10)
-                
-                # Plot 3: Magnitude
-                axes[0, 2].plot(k, magnitude, 'g-', linewidth=2.5, label='|Y[k]|')
-                axes[0, 2].scatter(k, magnitude, c='green', s=30, alpha=0.6, zorder=3)
-                axes[0, 2].fill_between(k, 0, magnitude, alpha=0.2, color='green')
-                axes[0, 2].set_xlabel('k (frequency index)', fontsize=11)
-                axes[0, 2].set_ylabel('Magnitude', fontsize=11)
-                axes[0, 2].set_title('Output Magnitude: |Y[k]|', fontsize=12, fontweight='bold')
-                axes[0, 2].grid(True, alpha=0.3)
-                axes[0, 2].legend(fontsize=10)
-                
-                # Plot 4: Real Part (same as transformed for real signals)
-                axes[1, 0].plot(k, real_part, 'b-', linewidth=2.5, label='Re{Y[k]}')
-                axes[1, 0].scatter(k, real_part, c='blue', s=30, alpha=0.6, zorder=3)
-                axes[1, 0].axhline(y=0, color='gray', linestyle='--', alpha=0.5)
-                axes[1, 0].fill_between(k, 0, real_part, alpha=0.2, color='blue')
-                axes[1, 0].set_xlabel('k (frequency index)', fontsize=11)
-                axes[1, 0].set_ylabel('Real Part', fontsize=11)
-                axes[1, 0].set_title('Output Real Part: Re{Y[k]}', fontsize=12, fontweight='bold')
-                axes[1, 0].grid(True, alpha=0.3)
-                axes[1, 0].legend(fontsize=10)
-                
-                # Plot 5: Imaginary Part (should be ~0)
-                axes[1, 1].plot(k, imag_part, 'r-', linewidth=2.5, label='Im{Y[k]} ≈ 0')
-                axes[1, 1].scatter(k, imag_part, c='red', s=30, alpha=0.6, zorder=3)
-                axes[1, 1].axhline(y=0, color='gray', linestyle='--', alpha=0.5)
-                axes[1, 1].set_xlabel('k (frequency index)', fontsize=11)
-                axes[1, 1].set_ylabel('Imaginary Part', fontsize=11)
-                axes[1, 1].set_title('Output Imaginary Part: Im{Y[k]} (≈0)', fontsize=12, fontweight='bold')
-                axes[1, 1].grid(True, alpha=0.3)
-                axes[1, 1].legend(fontsize=10)
-                axes[1, 1].set_ylim([-0.1, 0.1])  # Zoom in to show it's ~0
-                
-                # Plot 6: Phase
-                axes[1, 2].plot(k, phase, 'm-', linewidth=2.5, label='∠Y[k]')
-                axes[1, 2].scatter(k, phase, c='magenta', s=30, alpha=0.6, zorder=3)
-                axes[1, 2].axhline(y=0, color='gray', linestyle='--', alpha=0.5)
-                axes[1, 2].axhline(y=np.pi, color='gray', linestyle=':', alpha=0.5, label='±π')
-                axes[1, 2].axhline(y=-np.pi, color='gray', linestyle=':', alpha=0.5)
-                axes[1, 2].set_xlabel('k (frequency index)', fontsize=11)
-                axes[1, 2].set_ylabel('Phase (radians)', fontsize=11)
-                axes[1, 2].set_title('Output Phase: ∠Y[k]', fontsize=12, fontweight='bold')
-                axes[1, 2].grid(True, alpha=0.3)
-                axes[1, 2].legend(fontsize=10)
-                axes[1, 2].set_ylim([-np.pi - 0.5, np.pi + 0.5])
+                # Plot 2: Transformed Signal
+                axes[1].plot(k, real_part, 'purple', linewidth=2.5, label='Y[k] (Transformed)')
+                axes[1].scatter(k, real_part, c='purple', s=30, alpha=0.6, zorder=3)
+                axes[1].axhline(y=0, color='gray', linestyle='--', alpha=0.5)
+                axes[1].set_xlabel('k (frequency index)', fontsize=11)
+                axes[1].set_ylabel('Amplitude', fontsize=11)
+                axes[1].set_title('Transformed Signal: Y[k]', fontsize=12, fontweight='bold')
+                axes[1].grid(True, alpha=0.3)
+                axes[1].legend(fontsize=10)
                 
             else:
                 # Complex transformed: Different layout - 2 plots top, 3 plots bottom
@@ -803,7 +760,6 @@ class MDFKTImageAnalyzer:
                 ax2 = fig.add_subplot(gs[0, 1:])
                 ax2.plot(k, magnitude, 'g-', linewidth=2.5, label='|Y[k]|')
                 ax2.scatter(k, magnitude, c='green', s=30, alpha=0.6, zorder=3)
-                ax2.fill_between(k, 0, magnitude, alpha=0.2, color='green')
                 ax2.set_xlabel('k (frequency index)', fontsize=11)
                 ax2.set_ylabel('Magnitude', fontsize=11)
                 ax2.set_title('Output Magnitude: |Y[k]|', fontsize=12, fontweight='bold')
@@ -815,7 +771,6 @@ class MDFKTImageAnalyzer:
                 ax3.plot(k, real_part, 'b-', linewidth=2.5, label='Re{Y[k]}')
                 ax3.scatter(k, real_part, c='blue', s=30, alpha=0.6, zorder=3)
                 ax3.axhline(y=0, color='gray', linestyle='--', alpha=0.5)
-                ax3.fill_between(k, 0, real_part, alpha=0.2, color='blue')
                 ax3.set_xlabel('k (frequency index)', fontsize=11)
                 ax3.set_ylabel('Real Part', fontsize=11)
                 ax3.set_title('Output Real Part: Re{Y[k]}', fontsize=12, fontweight='bold')
@@ -827,7 +782,6 @@ class MDFKTImageAnalyzer:
                 ax4.plot(k, imag_part, 'r-', linewidth=2.5, label='Im{Y[k]}')
                 ax4.scatter(k, imag_part, c='red', s=30, alpha=0.6, zorder=3)
                 ax4.axhline(y=0, color='gray', linestyle='--', alpha=0.5)
-                ax4.fill_between(k, 0, imag_part, alpha=0.2, color='red')
                 ax4.set_xlabel('k (frequency index)', fontsize=11)
                 ax4.set_ylabel('Imaginary Part', fontsize=11)
                 ax4.set_title('Output Imaginary Part: Im{Y[k]}', fontsize=12, fontweight='bold')
@@ -952,61 +906,26 @@ class MDFKTImageAnalyzer:
             print(f"  Energy: {np.sum(magnitude**2):.6f}")
             
             if is_transformed_real:
-                fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+                # Real transformed: show only Input and Transformed (2 plots)
+                fig, axes = plt.subplots(1, 2, figsize=(12, 5))
                 fig.suptitle(f'{lambda_name}\nTest Signal: f(k) = sin(k·π/N), N={self.N}', 
                             fontsize=14, fontweight='bold')
                 
-                axes[0, 0].plot(k, test_signal, 'k-', linewidth=2.5)
-                axes[0, 0].scatter(k, test_signal, c='black', s=30, alpha=0.6, zorder=3)
-                axes[0, 0].axhline(y=0, color='gray', linestyle='--', alpha=0.5)
-                axes[0, 0].set_xlabel('k', fontsize=11)
-                axes[0, 0].set_ylabel('Amplitude', fontsize=11)
-                axes[0, 0].set_title('Input: f(k) = sin(k·π/N)', fontsize=12, fontweight='bold')
-                axes[0, 0].grid(True, alpha=0.3)
+                axes[0].plot(k, test_signal, 'k-', linewidth=2.5)
+                axes[0].scatter(k, test_signal, c='black', s=30, alpha=0.6, zorder=3)
+                axes[0].axhline(y=0, color='gray', linestyle='--', alpha=0.5)
+                axes[0].set_xlabel('k', fontsize=11)
+                axes[0].set_ylabel('Amplitude', fontsize=11)
+                axes[0].set_title('Input: f(k) = sin(k·π/N)', fontsize=12, fontweight='bold')
+                axes[0].grid(True, alpha=0.3)
                 
-                axes[0, 1].plot(k, real_part, 'purple', linewidth=2.5)
-                axes[0, 1].scatter(k, real_part, c='purple', s=30, alpha=0.6, zorder=3)
-                axes[0, 1].axhline(y=0, color='gray', linestyle='--', alpha=0.5)
-                axes[0, 1].fill_between(k, 0, real_part, alpha=0.2, color='purple')
-                axes[0, 1].set_xlabel('k', fontsize=11)
-                axes[0, 1].set_ylabel('Amplitude', fontsize=11)
-                axes[0, 1].set_title('Transformed: Y[k]', fontsize=12, fontweight='bold')
-                axes[0, 1].grid(True, alpha=0.3)
-                
-                axes[0, 2].plot(k, magnitude, 'g-', linewidth=2.5)
-                axes[0, 2].scatter(k, magnitude, c='green', s=30, alpha=0.6, zorder=3)
-                axes[0, 2].fill_between(k, 0, magnitude, alpha=0.2, color='green')
-                axes[0, 2].set_xlabel('k', fontsize=11)
-                axes[0, 2].set_ylabel('Magnitude', fontsize=11)
-                axes[0, 2].set_title('Magnitude: |Y[k]|', fontsize=12, fontweight='bold')
-                axes[0, 2].grid(True, alpha=0.3)
-                
-                axes[1, 0].plot(k, real_part, 'b-', linewidth=2.5)
-                axes[1, 0].scatter(k, real_part, c='blue', s=30, alpha=0.6, zorder=3)
-                axes[1, 0].axhline(y=0, color='gray', linestyle='--', alpha=0.5)
-                axes[1, 0].fill_between(k, 0, real_part, alpha=0.2, color='blue')
-                axes[1, 0].set_xlabel('k', fontsize=11)
-                axes[1, 0].set_ylabel('Real Part', fontsize=11)
-                axes[1, 0].set_title('Real Part: Re{Y[k]}', fontsize=12, fontweight='bold')
-                axes[1, 0].grid(True, alpha=0.3)
-                
-                axes[1, 1].plot(k, imag_part, 'r-', linewidth=2.5)
-                axes[1, 1].scatter(k, imag_part, c='red', s=30, alpha=0.6, zorder=3)
-                axes[1, 1].axhline(y=0, color='gray', linestyle='--', alpha=0.5)
-                axes[1, 1].set_xlabel('k', fontsize=11)
-                axes[1, 1].set_ylabel('Imaginary Part', fontsize=11)
-                axes[1, 1].set_title('Imaginary: Im{Y[k]} (≈0)', fontsize=12, fontweight='bold')
-                axes[1, 1].grid(True, alpha=0.3)
-                axes[1, 1].set_ylim([-0.1, 0.1])
-                
-                axes[1, 2].plot(k, phase, 'm-', linewidth=2.5)
-                axes[1, 2].scatter(k, phase, c='magenta', s=30, alpha=0.6, zorder=3)
-                axes[1, 2].axhline(y=0, color='gray', linestyle='--', alpha=0.5)
-                axes[1, 2].set_xlabel('k', fontsize=11)
-                axes[1, 2].set_ylabel('Phase (radians)', fontsize=11)
-                axes[1, 2].set_title('Phase: ∠Y[k]', fontsize=12, fontweight='bold')
-                axes[1, 2].grid(True, alpha=0.3)
-                axes[1, 2].set_ylim([-np.pi - 0.5, np.pi + 0.5])
+                axes[1].plot(k, real_part, 'purple', linewidth=2.5)
+                axes[1].scatter(k, real_part, c='purple', s=30, alpha=0.6, zorder=3)
+                axes[1].axhline(y=0, color='gray', linestyle='--', alpha=0.5)
+                axes[1].set_xlabel('k', fontsize=11)
+                axes[1].set_ylabel('Amplitude', fontsize=11)
+                axes[1].set_title('Transformed: Y[k]', fontsize=12, fontweight='bold')
+                axes[1].grid(True, alpha=0.3)
             else:
                 fig = plt.figure(figsize=(18, 12))
                 fig.suptitle(f'{lambda_name}\nTest Signal: f(k) = sin(k·π/N), N={self.N}', 
@@ -1026,7 +945,6 @@ class MDFKTImageAnalyzer:
                 ax2 = fig.add_subplot(gs[0, 1:])
                 ax2.plot(k, magnitude, 'g-', linewidth=2.5)
                 ax2.scatter(k, magnitude, c='green', s=30, alpha=0.6, zorder=3)
-                ax2.fill_between(k, 0, magnitude, alpha=0.2, color='green')
                 ax2.set_xlabel('k', fontsize=11)
                 ax2.set_ylabel('Magnitude', fontsize=11)
                 ax2.set_title('Magnitude: |Y[k]|', fontsize=12, fontweight='bold')
@@ -1036,7 +954,6 @@ class MDFKTImageAnalyzer:
                 ax3.plot(k, real_part, 'b-', linewidth=2.5)
                 ax3.scatter(k, real_part, c='blue', s=30, alpha=0.6, zorder=3)
                 ax3.axhline(y=0, color='gray', linestyle='--', alpha=0.5)
-                ax3.fill_between(k, 0, real_part, alpha=0.2, color='blue')
                 ax3.set_xlabel('k', fontsize=11)
                 ax3.set_ylabel('Real Part', fontsize=11)
                 ax3.set_title('Real: Re{Y[k]}', fontsize=12, fontweight='bold')
@@ -1046,7 +963,6 @@ class MDFKTImageAnalyzer:
                 ax4.plot(k, imag_part, 'r-', linewidth=2.5)
                 ax4.scatter(k, imag_part, c='red', s=30, alpha=0.6, zorder=3)
                 ax4.axhline(y=0, color='gray', linestyle='--', alpha=0.5)
-                ax4.fill_between(k, 0, imag_part, alpha=0.2, color='red')
                 ax4.set_xlabel('k', fontsize=11)
                 ax4.set_ylabel('Imaginary Part', fontsize=11)
                 ax4.set_title('Imaginary: Im{Y[k]}', fontsize=12, fontweight='bold')
@@ -1158,60 +1074,25 @@ class MDFKTImageAnalyzer:
             print(f"  Energy: {np.sum(magnitude**2):.6f}")
             
             if is_transformed_real:
-                fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+                # Real transformed: show only Input and Transformed (2 plots)
+                fig, axes = plt.subplots(1, 2, figsize=(12, 5))
                 fig.suptitle(f'{lambda_name}\nTest Signal: f(k) = 1/(k+1), N={self.N}', 
                             fontsize=14, fontweight='bold')
                 
-                axes[0, 0].plot(k, test_signal, 'k-', linewidth=2.5)
-                axes[0, 0].scatter(k, test_signal, c='black', s=30, alpha=0.6, zorder=3)
-                axes[0, 0].set_xlabel('k', fontsize=11)
-                axes[0, 0].set_ylabel('Amplitude', fontsize=11)
-                axes[0, 0].set_title('Input: f(k) = 1/(k+1)', fontsize=12, fontweight='bold')
-                axes[0, 0].grid(True, alpha=0.3)
+                axes[0].plot(k, test_signal, 'k-', linewidth=2.5)
+                axes[0].scatter(k, test_signal, c='black', s=30, alpha=0.6, zorder=3)
+                axes[0].set_xlabel('k', fontsize=11)
+                axes[0].set_ylabel('Amplitude', fontsize=11)
+                axes[0].set_title('Input: f(k) = 1/(k+1)', fontsize=12, fontweight='bold')
+                axes[0].grid(True, alpha=0.3)
                 
-                axes[0, 1].plot(k, real_part, 'purple', linewidth=2.5)
-                axes[0, 1].scatter(k, real_part, c='purple', s=30, alpha=0.6, zorder=3)
-                axes[0, 1].axhline(y=0, color='gray', linestyle='--', alpha=0.5)
-                axes[0, 1].fill_between(k, 0, real_part, alpha=0.2, color='purple')
-                axes[0, 1].set_xlabel('k', fontsize=11)
-                axes[0, 1].set_ylabel('Amplitude', fontsize=11)
-                axes[0, 1].set_title('Transformed: Y[k]', fontsize=12, fontweight='bold')
-                axes[0, 1].grid(True, alpha=0.3)
-                
-                axes[0, 2].plot(k, magnitude, 'g-', linewidth=2.5)
-                axes[0, 2].scatter(k, magnitude, c='green', s=30, alpha=0.6, zorder=3)
-                axes[0, 2].fill_between(k, 0, magnitude, alpha=0.2, color='green')
-                axes[0, 2].set_xlabel('k', fontsize=11)
-                axes[0, 2].set_ylabel('Magnitude', fontsize=11)
-                axes[0, 2].set_title('Magnitude: |Y[k]|', fontsize=12, fontweight='bold')
-                axes[0, 2].grid(True, alpha=0.3)
-                
-                axes[1, 0].plot(k, real_part, 'b-', linewidth=2.5)
-                axes[1, 0].scatter(k, real_part, c='blue', s=30, alpha=0.6, zorder=3)
-                axes[1, 0].axhline(y=0, color='gray', linestyle='--', alpha=0.5)
-                axes[1, 0].fill_between(k, 0, real_part, alpha=0.2, color='blue')
-                axes[1, 0].set_xlabel('k', fontsize=11)
-                axes[1, 0].set_ylabel('Real Part', fontsize=11)
-                axes[1, 0].set_title('Real Part: Re{Y[k]}', fontsize=12, fontweight='bold')
-                axes[1, 0].grid(True, alpha=0.3)
-                
-                axes[1, 1].plot(k, imag_part, 'r-', linewidth=2.5)
-                axes[1, 1].scatter(k, imag_part, c='red', s=30, alpha=0.6, zorder=3)
-                axes[1, 1].axhline(y=0, color='gray', linestyle='--', alpha=0.5)
-                axes[1, 1].set_xlabel('k', fontsize=11)
-                axes[1, 1].set_ylabel('Imaginary Part', fontsize=11)
-                axes[1, 1].set_title('Imaginary: Im{Y[k]} (≈0)', fontsize=12, fontweight='bold')
-                axes[1, 1].grid(True, alpha=0.3)
-                axes[1, 1].set_ylim([-0.1, 0.1])
-                
-                axes[1, 2].plot(k, phase, 'm-', linewidth=2.5)
-                axes[1, 2].scatter(k, phase, c='magenta', s=30, alpha=0.6, zorder=3)
-                axes[1, 2].axhline(y=0, color='gray', linestyle='--', alpha=0.5)
-                axes[1, 2].set_xlabel('k', fontsize=11)
-                axes[1, 2].set_ylabel('Phase (radians)', fontsize=11)
-                axes[1, 2].set_title('Phase: ∠Y[k]', fontsize=12, fontweight='bold')
-                axes[1, 2].grid(True, alpha=0.3)
-                axes[1, 2].set_ylim([-np.pi - 0.5, np.pi + 0.5])
+                axes[1].plot(k, real_part, 'purple', linewidth=2.5)
+                axes[1].scatter(k, real_part, c='purple', s=30, alpha=0.6, zorder=3)
+                axes[1].axhline(y=0, color='gray', linestyle='--', alpha=0.5)
+                axes[1].set_xlabel('k', fontsize=11)
+                axes[1].set_ylabel('Amplitude', fontsize=11)
+                axes[1].set_title('Transformed: Y[k]', fontsize=12, fontweight='bold')
+                axes[1].grid(True, alpha=0.3)
             else:
                 fig = plt.figure(figsize=(18, 12))
                 fig.suptitle(f'{lambda_name}\nTest Signal: f(k) = 1/(k+1), N={self.N}', 
@@ -1230,7 +1111,6 @@ class MDFKTImageAnalyzer:
                 ax2 = fig.add_subplot(gs[0, 1:])
                 ax2.plot(k, magnitude, 'g-', linewidth=2.5)
                 ax2.scatter(k, magnitude, c='green', s=30, alpha=0.6, zorder=3)
-                ax2.fill_between(k, 0, magnitude, alpha=0.2, color='green')
                 ax2.set_xlabel('k', fontsize=11)
                 ax2.set_ylabel('Magnitude', fontsize=11)
                 ax2.set_title('Magnitude: |Y[k]|', fontsize=12, fontweight='bold')
@@ -1240,7 +1120,6 @@ class MDFKTImageAnalyzer:
                 ax3.plot(k, real_part, 'b-', linewidth=2.5)
                 ax3.scatter(k, real_part, c='blue', s=30, alpha=0.6, zorder=3)
                 ax3.axhline(y=0, color='gray', linestyle='--', alpha=0.5)
-                ax3.fill_between(k, 0, real_part, alpha=0.2, color='blue')
                 ax3.set_xlabel('k', fontsize=11)
                 ax3.set_ylabel('Real Part', fontsize=11)
                 ax3.set_title('Real: Re{Y[k]}', fontsize=12, fontweight='bold')
@@ -1250,7 +1129,6 @@ class MDFKTImageAnalyzer:
                 ax4.plot(k, imag_part, 'r-', linewidth=2.5)
                 ax4.scatter(k, imag_part, c='red', s=30, alpha=0.6, zorder=3)
                 ax4.axhline(y=0, color='gray', linestyle='--', alpha=0.5)
-                ax4.fill_between(k, 0, imag_part, alpha=0.2, color='red')
                 ax4.set_xlabel('k', fontsize=11)
                 ax4.set_ylabel('Imaginary Part', fontsize=11)
                 ax4.set_title('Imaginary: Im{Y[k]}', fontsize=12, fontweight='bold')
@@ -1384,7 +1262,6 @@ class MDFKTImageAnalyzer:
             ax2 = fig.add_subplot(gs[0, 1:])
             ax2.plot(k, magnitude, 'g-', linewidth=2.5, label='|Y[k]|')
             ax2.scatter(k, magnitude, c='green', s=30, alpha=0.6, zorder=3)
-            ax2.fill_between(k, 0, magnitude, alpha=0.2, color='green')
             ax2.set_xlabel('k', fontsize=11)
             ax2.set_ylabel('Magnitude', fontsize=11)
             ax2.set_title('Output Magnitude: |Y[k]|', fontsize=12, fontweight='bold')
@@ -1396,7 +1273,6 @@ class MDFKTImageAnalyzer:
             ax3.plot(k, real_part, 'b-', linewidth=2.5, label='Re{Y[k]}')
             ax3.scatter(k, real_part, c='blue', s=30, alpha=0.6, zorder=3)
             ax3.axhline(y=0, color='gray', linestyle='--', alpha=0.5)
-            ax3.fill_between(k, 0, real_part, alpha=0.2, color='blue')
             ax3.set_xlabel('k', fontsize=11)
             ax3.set_ylabel('Real Part', fontsize=11)
             ax3.set_title('Real: Re{Y[k]}', fontsize=12, fontweight='bold')
@@ -1408,7 +1284,6 @@ class MDFKTImageAnalyzer:
             ax4.plot(k, imag_part, 'r-', linewidth=2.5, label='Im{Y[k]}')
             ax4.scatter(k, imag_part, c='red', s=30, alpha=0.6, zorder=3)
             ax4.axhline(y=0, color='gray', linestyle='--', alpha=0.5)
-            ax4.fill_between(k, 0, imag_part, alpha=0.2, color='red')
             ax4.set_xlabel('k', fontsize=11)
             ax4.set_ylabel('Imaginary Part', fontsize=11)
             ax4.set_title('Imaginary: Im{Y[k]}', fontsize=12, fontweight='bold')
@@ -1484,16 +1359,24 @@ if __name__ == "__main__":
     print("="*70)
     
     try:
-        results = analyzer.analyze_image(
-            image_path=image_path,
-            output_dir=None  # Will create 'mdfkt_results' folder automatically
-        )
+
+        results = analyzer.test_cosine_signal_with_lambda_variants(output_dir="mdfkt_cos_results")
+
+        results = analyzer.test_sine_signal_with_lambda_variants(output_dir="mdfkt_sin_results")
+
+        results = analyzer.test_reciprocal_signal_with_lambda_variants(output_dir="mdfkt_reciprocal_results")
+
+        results = analyzer.test_complex_exponential_signal_with_lambda_variants(output_dir="mdfkt_complex_exp_results")
+        # results = analyzer.analyze_image(
+        #     image_path=image_path,
+        #     output_dir=None  # Will create 'mdfkt_results' folder automatically
+        # )
         
-        print("\n" + "="*70)
-        print("ANALYSIS COMPLETE!")
-        print("="*70)
-        print(f"Total features extracted: {len(results['all_features'])}")
-        print(f"Check the output folder for visualizations and CSV file.")
+        # print("\n" + "="*70)
+        # print("ANALYSIS COMPLETE!")
+        # print("="*70)
+        # print(f"Total features extracted: {len(results['all_features'])}")
+        # print(f"Check the output folder for visualizations and CSV file.")
   
         
     except FileNotFoundError:
