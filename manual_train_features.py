@@ -252,20 +252,20 @@ CLASSIFIERS = {
         'class': TabularDNNClassifier,
         'params': {
             'input_dim': 511,  # Will be updated dynamically based on actual features
-            'hidden_units': [512, 512, 384, 384, 256, 256, 128],
-            'dropout_rate': 0.3,
-            'l2_reg': 1e-4,
-            'activation': 'swish',
-            'use_attention': True,
-            'learning_rate': 1e-3,
-            'batch_size': 128,
-            'epochs': 200,
-            'patience': 30,
-            'focal_loss_alpha': 0.16,  # 16.4% minority class (BCC)
+            'hidden_units': [512, 256, 128],  # Proven architecture for tabular data
+            'dropout_rate': 0.2,  # Moderate dropout - let it learn!
+            'l2_reg': 1e-5,  # Light regularization
+            'activation': 'relu',  # Reliable activation
+            'use_attention': False,  # Simplify first - add complexity later
+            'learning_rate': 1e-3,  # Standard learning rate
+            'batch_size': 128,  # Larger batches = stable gradients
+            'epochs': 150,
+            'patience': 20,
+            'focal_loss_alpha': 0.25,  # Balanced focal loss (not too aggressive)
             'focal_loss_gamma': 2.0,
-            'mixup_alpha': 0.2,
+            'mixup_alpha': 0.0,  # Disable mixup - causes issues with imbalanced data
             'validation_split': 0.2,
-            'verbose': 0,  # Set to 1 for progress bar
+            'verbose': 1,
             'random_state': 42
         }
     }
@@ -2706,11 +2706,11 @@ def train_models_from_features(features_filepath, args, logger, custom_params=No
                     plt.close()
                     logger.info(f"Feature importance plot saved to {output_path}")
 
-                    # Save model
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    safe_name = name.replace(" ", "_").replace("(", "").replace(")", "").lower()
-                    model_dir = f'model/feature_based_fast/{safe_name}_{timestamp}'
-                    os.makedirs(model_dir, exist_ok=True)
+                # Save model (moved outside feature importance block)
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                safe_name = name.replace(" ", "_").replace("(", "").replace(")", "").lower()
+                model_dir = f'model/feature_based_fast/{safe_name}_{timestamp}'
+                os.makedirs(model_dir, exist_ok=True)
                 
                 dump(clf, f'{model_dir}/model.joblib')
                 dump(scaler, f'{model_dir}/scaler.joblib')
