@@ -1130,7 +1130,10 @@ def train_features(args, logger):
                 'catboost': 'CatBoost',
                 'lgbm': 'LightGBM',
                 'extra_trees': 'Extra Trees',
-                'calibrated_svm': 'Calibrated SVM'
+                'calibrated_svm': 'Calibrated SVM',
+                'deep_dnn': 'Deep DNN',
+                'deep dnn': 'Deep DNN',
+                'dnn': 'Deep DNN'
             }
             
             requested_short_names = args.feature_classifiers.lower().split(',')
@@ -2259,7 +2262,15 @@ def train_models_from_features(features_filepath, args, logger, custom_params=No
                 'mlp': 'MLP',
                 'gb': 'Gradient Boosting',
                 'logistic': 'Logistic Regression',
-                'xgboost': 'XGBoost'
+                'xgboost': 'XGBoost',
+                'catboost': 'CatBoost',
+                'lgbm': 'LightGBM',
+                'lightgbm': 'LightGBM',
+                'extra_trees': 'Extra Trees',
+                'calibrated_svm': 'Calibrated SVM',
+                'deep_dnn': 'Deep DNN',
+                'deep dnn': 'Deep DNN',
+                'dnn': 'Deep DNN'
             }
             
             requested_short_names = args.feature_classifiers.lower().split(',')
@@ -2296,7 +2307,12 @@ def train_models_from_features(features_filepath, args, logger, custom_params=No
                         'MLP': 'mlp',
                         'Gradient Boosting': 'gb',
                         'Logistic Regression': 'logistic',
-                        'XGBoost': 'xgboost'
+                        'XGBoost': 'xgboost',
+                        'CatBoost': 'catboost',
+                        'LightGBM': 'lgbm',
+                        'Extra Trees': 'extra_trees',
+                        'Calibrated SVM': 'calibrated_svm',
+                        'Deep DNN': 'dnn'
                     }
                     
                     short_name = reverse_mapping.get(clf_name)
