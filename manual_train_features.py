@@ -43,6 +43,7 @@ from xgboost import XGBClassifier
 from src.dataset_handler import DatasetHandler
 from src.classifier import BCCSKClassifier
 from src.conventional_features import ConventionalFeatureExtractor
+from src.tabular_dnn_classifier import TabularDNNClassifier
 
 from src.segmentation.skin_lesion_processor import SkinLesionProcessor
 from catboost import CatBoostClassifier
@@ -245,6 +246,27 @@ CLASSIFIERS = {
             ),
             'method': 'sigmoid',
             'cv': 5
+        }
+    },
+    'Deep DNN': {
+        'class': TabularDNNClassifier,
+        'params': {
+            'input_dim': 511,  # Will be updated dynamically based on actual features
+            'hidden_units': [512, 512, 384, 384, 256, 256, 128],
+            'dropout_rate': 0.3,
+            'l2_reg': 1e-4,
+            'activation': 'swish',
+            'use_attention': True,
+            'learning_rate': 1e-3,
+            'batch_size': 128,
+            'epochs': 200,
+            'patience': 30,
+            'focal_loss_alpha': 0.16,  # 16.4% minority class (BCC)
+            'focal_loss_gamma': 2.0,
+            'mixup_alpha': 0.2,
+            'validation_split': 0.2,
+            'verbose': 0,  # Set to 1 for progress bar
+            'random_state': 42
         }
     }
 }
@@ -1294,6 +1316,30 @@ def train_features(args, logger):
                             'min_samples_split': [2, 5],
                             'min_samples_leaf': [1, 2],
                             'max_features': ['sqrt', 'log2']
+                        }
+                    
+                    elif name == 'Deep DNN':
+                        param_grid = {
+                            'hidden_units': [
+                                [512, 384, 256, 128],              # Moderate depth (4 residual blocks)
+                                [512, 512, 384, 384, 256, 256, 128],  # Deep (7 residual blocks) - DEFAULT
+                                [768, 768, 512, 512, 384, 256, 128],  # Wider and deeper
+                                [384, 384, 256, 256, 128]          # Shallower (5 residual blocks)
+                            ],
+                            'dropout_rate': [0.2, 0.3, 0.4],       # Regularization strength
+                            'learning_rate': [1e-4, 3e-4, 1e-3],   # Learning rate range
+                            'batch_size': [64, 128, 256],          # Batch size options
+                            'l2_reg': [1e-5, 1e-4, 1e-3],          # L2 regularization
+                            'activation': ['swish'],               # Swish proven best for tabular
+                            'use_attention': [True],               # Keep attention enabled
+                            'mixup_alpha': [0.0, 0.1, 0.2, 0.3],   # Mixup augmentation strength
+                            'focal_loss_alpha': [0.16, 0.20, 0.25], # Class imbalance handling
+                            'focal_loss_gamma': [1.5, 2.0, 2.5],   # Focusing parameter
+                            'epochs': [200],                       # Fixed epochs (early stopping handles)
+                            'patience': [30],                      # Early stopping patience
+                            'validation_split': [0.2],             # Fixed validation split
+                            'verbose': [0],                        # Silent during grid search
+                            'random_state': [42]
                         }
                     else:
                         param_grid = {}
@@ -2423,6 +2469,30 @@ def train_models_from_features(features_filepath, args, logger, custom_params=No
                             'min_samples_split': [2, 5],
                             'min_samples_leaf': [1, 2],
                             'max_features': ['sqrt', 'log2']
+                        }
+                    
+                    elif name == 'Deep DNN':
+                        param_grid = {
+                            'hidden_units': [
+                                [512, 384, 256, 128],              # Moderate depth (4 residual blocks)
+                                [512, 512, 384, 384, 256, 256, 128],  # Deep (7 residual blocks) - DEFAULT
+                                [768, 768, 512, 512, 384, 256, 128],  # Wider and deeper
+                                [384, 384, 256, 256, 128]          # Shallower (5 residual blocks)
+                            ],
+                            'dropout_rate': [0.2, 0.3, 0.4],       # Regularization strength
+                            'learning_rate': [1e-4, 3e-4, 1e-3],   # Learning rate range
+                            'batch_size': [64, 128, 256],          # Batch size options
+                            'l2_reg': [1e-5, 1e-4, 1e-3],          # L2 regularization
+                            'activation': ['swish'],               # Swish proven best for tabular
+                            'use_attention': [True],               # Keep attention enabled
+                            'mixup_alpha': [0.0, 0.1, 0.2, 0.3],   # Mixup augmentation strength
+                            'focal_loss_alpha': [0.16, 0.20, 0.25], # Class imbalance handling
+                            'focal_loss_gamma': [1.5, 2.0, 2.5],   # Focusing parameter
+                            'epochs': [200],                       # Fixed epochs (early stopping handles)
+                            'patience': [30],                      # Early stopping patience
+                            'validation_split': [0.2],             # Fixed validation split
+                            'verbose': [0],                        # Silent during grid search
+                            'random_state': [42]
                         }
                     else:
                         param_grid = {}
