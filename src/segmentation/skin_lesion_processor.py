@@ -1227,12 +1227,12 @@ class SkinLesionProcessor:
         # Step 4: Apply inpainting with combined mask
         inpainted_image = self.apply_inpainting(original_image, combined_hair_mask)
 
-        inpainted_image_by_bilateral_filter = self.custom_bilateral_filter(original_image, combined_hair_mask)
+        # inpainted_image_by_bilateral_filter = self.custom_bilateral_filter(original_image, combined_hair_mask)
         
         # Step 5: Apply Gaussian blur
         gaussian_blurred_image = self.apply_gaussian_blur(inpainted_image)
         
-        gaussian_blurred_from_inpainted_image_by_bilateral_filter_image = self.apply_gaussian_blur(inpainted_image_by_bilateral_filter)
+        # gaussian_blurred_from_inpainted_image_by_bilateral_filter_image = self.apply_gaussian_blur(inpainted_image_by_bilateral_filter)
 
         # Step 6: Get segmentation mask
         predicted_mask = self.get_segmentation_mask(gaussian_blurred_image)
@@ -1250,9 +1250,9 @@ class SkinLesionProcessor:
             io.imsave(self.output_dir / f"{base_name}_02_grayscale.jpg", grayscale_image)
             io.imsave(self.output_dir / f"{base_name}_03_blackhat.jpg", blackhat_image)
             io.imsave(self.output_dir / f"{base_name}_04_inpainted.jpg", inpainted_image)
-            io.imsave(self.output_dir / f"{base_name}_04_1_inpainted_with_bilateral_inpainting.jpg", inpainted_image_by_bilateral_filter)
+            # io.imsave(self.output_dir / f"{base_name}_04_1_inpainted_with_bilateral_inpainting.jpg", inpainted_image_by_bilateral_filter)
             io.imsave(self.output_dir / f"{base_name}_05_gaussian.jpg", gaussian_blurred_image)
-            io.imsave(self.output_dir / f"{base_name}_05_1_gaussian_with_bilateral_inpainting.jpg", gaussian_blurred_from_inpainted_image_by_bilateral_filter_image)
+            # io.imsave(self.output_dir / f"{base_name}_05_1_gaussian_with_bilateral_inpainting.jpg", gaussian_blurred_from_inpainted_image_by_bilateral_filter_image)
 
             cv2.imwrite(str(self.output_dir / f"{base_name}_06_mask.jpg"), 
                     img_as_ubyte(predicted_mask.squeeze()))
