@@ -3,12 +3,18 @@ import logging
 from skimage import color, feature, measure, filters
 from skimage.feature import graycomatrix, graycoprops, local_binary_pattern
 from skimage.morphology import convex_hull_image
+from skimage.segmentation import find_boundaries
 from scipy import ndimage, stats
 import pywt
 import cv2
 from scipy.special import comb
 from scipy.special import gammaln
 from scipy import special
+import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle
+from matplotlib.gridspec import GridSpec
+from pathlib import Path
+import os
 
 class ConventionalFeatureExtractor:
     def __init__(self):
@@ -1130,11 +1136,449 @@ class ConventionalFeatureExtractor:
         features['mdfkt_RG_mag_ratio'] = 1.0
         features['mdfkt_RB_mag_ratio'] = 1.0
         features['mdfkt_GB_mag_ratio'] = 1.0
-        features['mdfkt_rgb_r_contribution'] = 0.33
-        features['mdfkt_rgb_g_contribution'] = 0.33
-        features['mdfkt_rgb_b_contribution'] = 0.34
-        features['mdfkt_channel_variance'] = 0.0
+
+    def visualize_features_for_publication(self, image_path, mask=None, save_path=None, dpi=300):
+        """
+        Create publication-quality visualization of extracted features on the image.
         
-        return features
+        This generates a comprehensive multi-panel figure suitable for academic papers showing:
+        - Original image with mask overlay
+        - Geometric features (asymmetry axes, convex hull, centroid)
+        - Border irregularity analysis
+        - Color distribution (HSV hue map)
+        - Texture analysis (Gabor filters at multiple orientations)
+        - Local Binary Pattern visualization
+        - Edge strength gradient map
+        - Feature summary statistics
+        
+        Args:
+            image_path (str): Path to the input image
+            mask (np.ndarray, optional): Binary mask. Auto-generated using Otsu if None
+            save_path (str, optional): Output path. Auto-generated in output/features/ if None
+            dpi (int): Resolution for publication quality (default: 300)
+            
+        Returns:
+            matplotlib.figure.Figure: The generated figure
+            
+        Example:
+            >>> extractor = ConventionalFeatureExtractor()
+            >>> fig = extractor.visualize_features_for_publication('data/sample.jpg')
+        """
+        try:
+            # Load and validate image
+            if not os.path.exists(image_path):
+                self.logger.error(f"Image not found: {image_path}")
+                return None
+                
+            image = cv2.imread(image_path)
+            if image is None:
+                self.logger.error(f"Failed to load image: {image_path}")
+                return None
+                
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            
+            # Auto-generate mask if not provided
+            if mask is None:
+                gray = color.rgb2gray(image)
+                threshold = filters.threshold_otsu(gray)
+                mask = gray < threshold
+                self.logger.info("Auto-generated mask using Otsu thresholding")
+            
+            # Extract features (only active features, not commented ones)
+            self.logger.info("Extracting features for visualization...")
+            features = self.extract_all_features(image, mask)
+            
+            # Create figure with GridSpec for flexible layout
+            fig = plt.figure(figsize=(20, 14))
+            gs = GridSpec(4, 4, figure=fig, hspace=0.4, wspace=0.35)
+            
+            # ========== Panel (a): Original Image with Mask ==========
+            ax1 = fig.add_subplot(gs[0, 0])
+            ax1.imshow(image)
+            ax1.contour(mask, colors='yellow', linewidths=2.5, alpha=0.9)
+            ax1.set_title('(a) Original Image\nwith Lesion Mask', fontsize=11, fontweight='bold')
+            ax1.axis('off')
+            
+            # ========== Panel (b): Geometric Features ==========
+            ax2 = fig.add_subplot(gs[0, 1])
+            ax2.imshow(image)
+            
+            regionprops = measure.regionprops(mask.astype(int))
+            if regionprops:
+                props = regionprops[0]
+                y0, x0 = props.centroid
+                orientation = props.orientation
+                
+                # Major axis
+                x1 = x0 + np.cos(orientation) * 0.5 * props.major_axis_length
+                y1 = y0 - np.sin(orientation) * 0.5 * props.major_axis_length
+                x2 = x0 - np.cos(orientation) * 0.5 * props.major_axis_length
+                y2 = y0 + np.sin(orientation) * 0.5 * props.major_axis_length
+                ax2.plot([x1, x2], [y1, y2], 'r-', linewidth=3, label='Major axis', alpha=0.9)
+                
+                # Minor axis
+                x1_min = x0 - np.sin(orientation) * 0.5 * props.minor_axis_length
+                y1_min = y0 - np.cos(orientation) * 0.5 * props.minor_axis_length
+                x2_min = x0 + np.sin(orientation) * 0.5 * props.minor_axis_length
+                y2_min = y0 + np.cos(orientation) * 0.5 * props.minor_axis_length
+                ax2.plot([x1_min, x2_min], [y1_min, y2_min], 'b-', linewidth=3, label='Minor axis', alpha=0.9)
+                
+                # Centroid
+                ax2.plot(x0, y0, 'go', markersize=12, label='Centroid', 
+                        markeredgecolor='white', markeredgewidth=2)
+                
+                # Convex hull
+                hull = convex_hull_image(mask)
+                ax2.contour(hull, colors='cyan', linewidths=2, linestyles='--', alpha=0.8)
+                
+            ax2.set_title('(b) Geometric Features\n(Asymmetry Axes)', fontsize=11, fontweight='bold')
+            ax2.legend(loc='upper right', fontsize=8, framealpha=0.95)
+            ax2.axis('off')
+            
+            # ========== Panel (c): Border Irregularity ==========
+            ax3 = fig.add_subplot(gs[0, 2])
+            border = find_boundaries(mask, mode='inner')
+            border_img = image.copy()
+            border_img[border] = [255, 0, 0]
+            ax3.imshow(border_img)
+            
+            compactness = features.get("compactness", 0)
+            perimeter = features.get("perimeter", 0)
+            ax3.set_title(f'(c) Border Analysis\nCompactness: {compactness:.4f}\nPerimeter: {perimeter:.1f}px', 
+                         fontsize=11, fontweight='bold')
+            ax3.axis('off')
+            
+            # ========== Panel (d): Color Distribution (HSV Hue) ==========
+            ax4 = fig.add_subplot(gs[0, 3])
+            hsv_image = color.rgb2hsv(image)
+            h_channel = hsv_image[:,:,0].copy()
+            h_channel[~mask] = 0
+            im4 = ax4.imshow(h_channel, cmap='hsv', vmin=0, vmax=1)
+            cbar4 = plt.colorbar(im4, ax=ax4, fraction=0.046, pad=0.04)
+            cbar4.ax.tick_params(labelsize=8)
+            
+            h_mean = features.get("hsv_h_mean", 0)
+            h_std = features.get("hsv_h_std", 0)
+            ax4.set_title(f'(d) Hue Distribution\nMean: {h_mean:.3f}\nStd: {h_std:.3f}', 
+                         fontsize=11, fontweight='bold')
+            ax4.axis('off')
+            
+            # ========== Panels (e1-e4): Gabor Filter Responses ==========
+            gray_img = color.rgb2gray(image)
+            orientations = [0, np.pi/4, np.pi/2, 3*np.pi/4]
+            orientation_names = ['0°', '45°', '90°', '135°']
+            
+            for idx, (theta, name) in enumerate(zip(orientations, orientation_names)):
+                ax = fig.add_subplot(gs[1, idx])
+                
+                # Apply Gabor filter
+                gabor_kernel = cv2.getGaborKernel((31, 31), sigma=4, theta=theta, 
+                                                 lambd=10, gamma=0.5, psi=0)
+                filtered = cv2.filter2D(gray_img, cv2.CV_64F, gabor_kernel)
+                filtered_masked = filtered.copy()
+                filtered_masked[~mask] = 0
+                
+                im = ax.imshow(filtered_masked, cmap='viridis')
+                cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+                cbar.ax.tick_params(labelsize=7)
+                ax.set_title(f'(e{idx+1}) Gabor {name}', fontsize=10, fontweight='bold')
+                ax.axis('off')
+            
+            # ========== Panel (f): Local Binary Pattern ==========
+            ax_lbp = fig.add_subplot(gs[2, 0])
+            gray_uint8 = (color.rgb2gray(image) * 255).astype(np.uint8)
+            lbp = local_binary_pattern(gray_uint8, P=24, R=3, method='uniform')
+            lbp_masked = lbp.copy()
+            lbp_masked[~mask] = 0
+            im_lbp = ax_lbp.imshow(lbp_masked, cmap='gray')
+            cbar_lbp = plt.colorbar(im_lbp, ax=ax_lbp, fraction=0.046, pad=0.04)
+            cbar_lbp.ax.tick_params(labelsize=8)
+            
+            lbp_unif = features.get("lbp_uniformity", 0)
+            ax_lbp.set_title(f'(f) Local Binary Pattern\nUniformity: {lbp_unif:.4f}', 
+                            fontsize=11, fontweight='bold')
+            ax_lbp.axis('off')
+            
+            # ========== Panel (g): Edge Strength (Sobel Gradient) ==========
+            ax_edge = fig.add_subplot(gs[2, 1])
+            gray_norm = color.rgb2gray(image)
+            sobelx = cv2.Sobel(gray_norm, cv2.CV_64F, 1, 0, ksize=3)
+            sobely = cv2.Sobel(gray_norm, cv2.CV_64F, 0, 1, ksize=3)
+            magnitude = np.sqrt(sobelx**2 + sobely**2)
+            magnitude_masked = magnitude.copy()
+            magnitude_masked[~mask] = 0
+            im_edge = ax_edge.imshow(magnitude_masked, cmap='hot')
+            cbar_edge = plt.colorbar(im_edge, ax=ax_edge, fraction=0.046, pad=0.04)
+            cbar_edge.ax.tick_params(labelsize=8)
+            
+            edge_mean = features.get("edge_strength_mean", 0)
+            ax_edge.set_title(f'(g) Edge Strength\nMean: {edge_mean:.4f}', 
+                             fontsize=11, fontweight='bold')
+            ax_edge.axis('off')
+            
+            # ========== Panel (h): MDFKT Magnitude (R channel) ==========
+            ax_mdfkt = fig.add_subplot(gs[2, 2])
+            # Show RGB channels separately
+            rgb_channels = cv2.split(image)
+            r_channel_masked = rgb_channels[0].copy().astype(float)
+            r_channel_masked[~mask] = 0
+            im_r = ax_mdfkt.imshow(r_channel_masked, cmap='Reds')
+            cbar_r = plt.colorbar(im_r, ax=ax_mdfkt, fraction=0.046, pad=0.04)
+            cbar_r.ax.tick_params(labelsize=8)
+            
+            mdfkt_energy = features.get("mdfkt_R_magnitude_energy", 0)
+            ax_mdfkt.set_title(f'(h) Red Channel\nMDFKT Energy: {mdfkt_energy:.2e}', 
+                              fontsize=11, fontweight='bold')
+            ax_mdfkt.axis('off')
+            
+            # ========== Panel (i): Texture Statistics ==========
+            ax_stats = fig.add_subplot(gs[2, 3])
+            ax_stats.axis('off')
+            
+            stats_text = f"""Texture Features:
+
+GLCM:
+  • Contrast: {features.get('glcm_contrast_d1_a0', 0):.4f}
+  • Correlation: {features.get('glcm_correlation_d1_a0', 0):.4f}
+  • Energy: {features.get('glcm_energy_d1_a0', 0):.4f}
+  • Homogeneity: {features.get('glcm_homogeneity_d1_a0', 0):.4f}
+
+LBP:
+  • Uniformity: {features.get('lbp_uniformity', 0):.4f}
+  • Entropy: {features.get('lbp_entropy', 0):.4f}
+
+Wavelet (db1):
+  • Energy: {features.get('wavelet_db1_energy', 0):.4f}
+  • Entropy: {features.get('wavelet_db1_entropy', 0):.4f}
+
+Gabor Filters:
+  • Mean response: {features.get('gabor_t0_s3_f10_mean', 0):.4f}
+            """
+            ax_stats.text(0.05, 0.5, stats_text, fontsize=9, family='monospace',
+                         verticalalignment='center', 
+                         bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.4, pad=1))
+            ax_stats.set_title('(i) Texture Statistics', fontsize=11, fontweight='bold')
+            
+            # ========== Panel (j): Geometric Summary ==========
+            ax_geom = fig.add_subplot(gs[3, 0])
+            ax_geom.axis('off')
+            
+            geom_text = f"""Geometric Features:
+
+Shape:
+  • Area: {features.get('area', 0):.1f} px²
+  • Perimeter: {features.get('perimeter', 0):.1f} px
+  • Compactness: {features.get('compactness', 0):.4f}
+  • Solidity: {features.get('solidity', 0):.4f}
+
+Axes:
+  • Major: {features.get('major_axis_length', 0):.1f} px
+  • Minor: {features.get('minor_axis_length', 0):.1f} px
+  • Ratio: {features.get('axis_ratio', 1):.4f}
+
+Asymmetry:
+  • Horizontal: {features.get('asymmetry_horizontal', 0):.4f}
+  • Vertical: {features.get('asymmetry_vertical', 0):.4f}
+            """
+            ax_geom.text(0.05, 0.5, geom_text, fontsize=9, family='monospace',
+                        verticalalignment='center',
+                        bbox=dict(boxstyle='round', facecolor='lightgreen', alpha=0.4, pad=1))
+            ax_geom.set_title('(j) Geometric Summary', fontsize=11, fontweight='bold')
+            
+            # ========== Panel (k): Color Summary ==========
+            ax_color = fig.add_subplot(gs[3, 1])
+            ax_color.axis('off')
+            
+            color_text = f"""Color Features:
+
+RGB:
+  • R mean: {features.get('rgb_r_mean', 0):.2f}
+  • G mean: {features.get('rgb_g_mean', 0):.2f}
+  • B mean: {features.get('rgb_b_mean', 0):.2f}
+
+HSV:
+  • H mean: {features.get('hsv_h_mean', 0):.3f}
+  • S mean: {features.get('hsv_s_mean', 0):.3f}
+  • V mean: {features.get('hsv_v_mean', 0):.3f}
+
+LAB:
+  • L mean: {features.get('lab_l_mean', 0):.2f}
+  • A mean: {features.get('lab_a_mean', 0):.2f}
+  • B mean: {features.get('lab_b_mean', 0):.2f}
+            """
+            ax_color.text(0.05, 0.5, color_text, fontsize=9, family='monospace',
+                         verticalalignment='center',
+                         bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.5, pad=1))
+            ax_color.set_title('(k) Color Summary', fontsize=11, fontweight='bold')
+            
+            # ========== Panel (l): MDFKT Features ==========
+            ax_mdfkt_sum = fig.add_subplot(gs[3, 2])
+            ax_mdfkt_sum.axis('off')
+            
+            mdfkt_text = f"""MDFKT Features:
+
+R Channel:
+  • Magnitude mean: {features.get('mdfkt_R_magnitude_mean', 0):.2e}
+  • Energy: {features.get('mdfkt_R_magnitude_energy', 0):.2e}
+  • Entropy: {features.get('mdfkt_R_magnitude_entropy', 0):.4f}
+
+G Channel:
+  • Magnitude mean: {features.get('mdfkt_G_magnitude_mean', 0):.2e}
+  • Energy: {features.get('mdfkt_G_magnitude_energy', 0):.2e}
+
+B Channel:
+  • Magnitude mean: {features.get('mdfkt_B_magnitude_mean', 0):.2e}
+  • Energy: {features.get('mdfkt_B_magnitude_energy', 0):.2e}
+
+Cross-channel:
+  • RG ratio: {features.get('mdfkt_RG_mag_ratio', 1):.4f}
+            """
+            ax_mdfkt_sum.text(0.05, 0.5, mdfkt_text, fontsize=9, family='monospace',
+                             verticalalignment='center',
+                             bbox=dict(boxstyle='round', facecolor='lavender', alpha=0.5, pad=1))
+            ax_mdfkt_sum.set_title('(l) MDFKT Summary', fontsize=11, fontweight='bold')
+            
+            # ========== Panel (m): Top Feature Values ==========
+            ax_bars = fig.add_subplot(gs[3, 3])
+            
+            # Select key features for bar chart
+            key_features = {
+                'Compactness': features.get('compactness', 0),
+                'Solidity': features.get('solidity', 0),
+                'Axis Ratio': features.get('axis_ratio', 1) - 0.5,  # Center around 0.5
+                'GLCM Contrast': min(features.get('glcm_contrast_d1_a0', 0) / 100, 1),
+                'LBP Uniformity': features.get('lbp_uniformity', 0),
+                'Edge Strength': min(features.get('edge_strength_mean', 0) * 10, 1),
+                'HSV S Mean': features.get('hsv_s_mean', 0),
+                'Gabor Mean': min(abs(features.get('gabor_t0_s3_f10_mean', 0)) / 10, 1),
+            }
+            
+            names = list(key_features.keys())
+            values = list(key_features.values())
+            
+            # Color code based on value
+            colors = ['#2ecc71' if v < 0.33 else '#f39c12' if v < 0.67 else '#e74c3c' 
+                     for v in values]
+            
+            y_pos = np.arange(len(names))
+            bars = ax_bars.barh(y_pos, values, color=colors, alpha=0.8, edgecolor='black', linewidth=0.5)
+            ax_bars.set_yticks(y_pos)
+            ax_bars.set_yticklabels(names, fontsize=8)
+            ax_bars.set_xlabel('Normalized Value', fontsize=9)
+            ax_bars.set_xlim(0, 1.0)
+            ax_bars.set_title('(m) Key Feature Values', fontsize=11, fontweight='bold')
+            ax_bars.grid(axis='x', alpha=0.3, linestyle='--')
+            
+            # Add value labels
+            for i, (bar, val) in enumerate(zip(bars, values)):
+                ax_bars.text(val + 0.02, i, f'{val:.3f}', va='center', fontsize=7)
+            
+            # Main title
+            image_name = Path(image_path).stem
+            fig.suptitle(f'Feature Extraction Analysis for Skin Lesion Classification\nImage: {image_name}', 
+                        fontsize=15, fontweight='bold', y=0.995)
+            
+            # Auto-generate save path
+            if save_path is None:
+                output_dir = Path('output/features')
+                output_dir.mkdir(parents=True, exist_ok=True)
+                save_path = output_dir / f'{image_name}_feature_visualization.png'
+            else:
+                os.makedirs(os.path.dirname(save_path), exist_ok=True)
+            
+            # Save figure
+            plt.savefig(save_path, dpi=dpi, bbox_inches='tight', facecolor='white')
+            self.logger.info(f"✅ Feature visualization saved to: {save_path}")
+            
+            plt.close(fig)
+            return fig
+            
+        except Exception as e:
+            self.logger.error(f"Error creating visualization: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return None
+
+
+# ========== Main execution block ==========
+if __name__ == "__main__":
+    import sys
+    
+    # Configure logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
+    
+    print("\n" + "="*70)
+    print("Feature Visualization Tool for Academic Publication")
+    print("="*70)
+    
+    # Create feature extractor
+    extractor = ConventionalFeatureExtractor()
+    
+    if len(sys.argv) > 1:
+        # User provided image path
+        image_path = sys.argv[1]
+        
+        # Optional mask path
+        mask = None
+        if len(sys.argv) > 2:
+            mask_path = sys.argv[2]
+            if os.path.exists(mask_path):
+                mask_img = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+                mask = mask_img > 127
+                print(f"Loaded mask from: {mask_path}")
+        
+        print(f"\nProcessing image: {image_path}")
+        print("-" * 70)
+        
+        # Generate visualization
+        fig = extractor.visualize_features_for_publication(
+            image_path=image_path,
+            mask=mask,
+            dpi=300
+        )
+        
+        if fig:
+            print("\n✅ Visualization completed successfully!")
+            print("="*70)
+        else:
+            print("\n❌ Visualization failed. Check logs for errors.")
+            print("="*70)
+    else:
+        # Show usage and try demo
+        print("\nUsage:")
+        print("  python src/conventional_features.py <image_path> [mask_path]")
+        print("\nExamples:")
+        print("  python src/conventional_features.py data/sk_segmented/ISIC_0025803_segmented.jpg")
+        print("  python src/conventional_features.py data/sk_segmented/image.jpg mask.png")
+        print("="*70)
+        
+        # Search for sample images
+        sample_dirs = ['data/bcc_segmented', 'data/sk_segmented', 'data/bcc', 'data/sk']
+        
+        for sample_dir in sample_dirs:
+            if os.path.exists(sample_dir):
+                import glob
+                images = glob.glob(f"{sample_dir}/*.jpg") + glob.glob(f"{sample_dir}/*.png")
+                
+                if images:
+                    print(f"\n✨ Found sample images in: {sample_dir}/")
+                    print(f"Running demo with: {images[0]}")
+                    print("-" * 70)
+                    
+                    fig = extractor.visualize_features_for_publication(
+                        image_path=images[0],
+                        dpi=300
+                    )
+                    
+                    if fig:
+                        print("\n✅ Demo visualization completed!")
+                        print("="*70)
+                    break
+        else:
+            print("\n⚠️  No sample images found. Please provide an image path.")
+            print("="*70)
 
 
