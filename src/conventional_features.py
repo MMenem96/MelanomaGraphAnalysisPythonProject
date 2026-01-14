@@ -2,11 +2,17 @@ import numpy as np
 import logging
 from skimage import color, feature, measure, filters
 from skimage.feature import graycomatrix, graycoprops, local_binary_pattern
-from skimage.morphology import convex_hull_image
+from skimage.morphology import convex_hull_image, disk
+from skimage.segmentation import find_boundaries
 from scipy import ndimage, stats
 from scipy.special import comb
 import pywt
 import cv2
+import matplotlib.pyplot as plt
+from matplotlib.patches import Ellipse, Rectangle
+from matplotlib.gridspec import GridSpec
+from pathlib import Path
+import os
 
 class ConventionalFeatureExtractor:
     def __init__(self):
@@ -973,3 +979,360 @@ class ConventionalFeatureExtractor:
             except Exception as e:
                 self.logger.error(f"Error in enhanced color features: {str(e)}")
                 return {}
+    
+    def visualize_features_for_publication(self, image_path, mask=None, save_path=None, dpi=300):
+        """
+        Create publication-quality visualization of extracted features.
+        
+        Generates a comprehensive multi-panel figure showing:
+        1. Original image with mask overlay
+        2. Geometric features (asymmetry axes, convex hull, border)
+        3. Color distribution heatmaps (HSV)
+        4. Texture features (Gabor responses, LBP)
+        5. Border analysis and gradient visualization
+        6. ABCDE clinical features summary
+        7. Key feature values bar chart
+        
+        Args:
+            image_path: Path to the image file
+            mask: Binary mask (auto-generated if None)
+            save_path: Path to save the figure (optional, auto-generated if None)
+            dpi: Resolution for publication (default: 300)
+            
+        Returns:
+            matplotlib.figure.Figure: The generated figure object
+        """
+        try:
+            # Load image
+            if not os.path.exists(image_path):
+                self.logger.error(f"Image not found: {image_path}")
+                return None
+                
+            image = cv2.imread(image_path)
+            if image is None:
+                self.logger.error(f"Failed to load image: {image_path}")
+                return None
+                
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            
+            if mask is None:
+                # Auto-generate mask using Otsu's thresholding
+                gray = color.rgb2gray(image)
+                threshold = filters.threshold_otsu(gray)
+                mask = gray < threshold
+                self.logger.info("Auto-generated mask using Otsu's method")
+            
+            # Extract all features
+            self.logger.info("Extracting features for visualization...")
+            features = self.extract_all_features(image, mask)
+            
+            # Create figure with GridSpec layout
+            fig = plt.figure(figsize=(20, 12))
+            gs = GridSpec(3, 4, figure=fig, hspace=0.35, wspace=0.35)
+            
+            # ===== 1. Original image with mask overlay =====
+            ax1 = fig.add_subplot(gs[0, 0])
+            ax1.imshow(image)
+            ax1.contour(mask, colors='yellow', linewidths=2, alpha=0.8)
+            ax1.set_title('(a) Original Image with Lesion Mask', fontsize=11, fontweight='bold')
+            ax1.axis('off')
+            
+            # ===== 2. Geometric features visualization =====
+            ax2 = fig.add_subplot(gs[0, 1])
+            ax2.imshow(image)
+            
+            # Draw geometric features
+            regionprops = measure.regionprops(mask.astype(int))
+            if regionprops:
+                props = regionprops[0]
+                y0, x0 = props.centroid
+                orientation = props.orientation
+                
+                # Major axis
+                x1 = x0 + np.cos(orientation) * 0.5 * props.major_axis_length
+                y1 = y0 - np.sin(orientation) * 0.5 * props.major_axis_length
+                x2 = x0 - np.cos(orientation) * 0.5 * props.major_axis_length
+                y2 = y0 + np.sin(orientation) * 0.5 * props.major_axis_length
+                ax2.plot([x1, x2], [y1, y2], 'r-', linewidth=2.5, label='Major axis')
+                
+                # Minor axis
+                x1_min = x0 - np.sin(orientation) * 0.5 * props.minor_axis_length
+                y1_min = y0 - np.cos(orientation) * 0.5 * props.minor_axis_length
+                x2_min = x0 + np.sin(orientation) * 0.5 * props.minor_axis_length
+                y2_min = y0 + np.cos(orientation) * 0.5 * props.minor_axis_length
+                ax2.plot([x1_min, x2_min], [y1_min, y2_min], 'b-', linewidth=2.5, label='Minor axis')
+                
+                # Centroid
+                ax2.plot(x0, y0, 'go', markersize=10, label='Centroid', markeredgecolor='white', markeredgewidth=1)
+                
+                # Convex hull
+                hull = convex_hull_image(mask)
+                ax2.contour(hull, colors='lime', linewidths=2, linestyles='dashed', alpha=0.8)
+                
+            ax2.set_title('(b) Geometric Features\n(A: Asymmetry Analysis)', fontsize=11, fontweight='bold')
+            ax2.legend(loc='upper right', fontsize=8, framealpha=0.9)
+            ax2.axis('off')
+            
+            # ===== 3. Border irregularity =====
+            ax3 = fig.add_subplot(gs[0, 2])
+            border = find_boundaries(mask, mode='inner')
+            border_overlay = image.copy()
+            border_overlay[border] = [255, 0, 0]
+            ax3.imshow(border_overlay)
+            
+            compactness_val = features.get("compactness", 0)
+            smoothness_val = features.get("border_smoothness", 0)
+            ax3.set_title(f'(c) Border Irregularity (B)\nCompactness: {compactness_val:.3f}\nSmoothness: {smoothness_val:.3f}', 
+                         fontsize=11, fontweight='bold')
+            ax3.axis('off')
+            
+            # ===== 4. Color distribution (Hue channel) =====
+            ax4 = fig.add_subplot(gs[0, 3])
+            hsv_image = color.rgb2hsv(image)
+            h_channel = hsv_image[:,:,0].copy()
+            h_channel[~mask] = 0
+            im4 = ax4.imshow(h_channel, cmap='hsv', vmin=0, vmax=1)
+            cbar4 = plt.colorbar(im4, ax=ax4, fraction=0.046, pad=0.04)
+            cbar4.ax.tick_params(labelsize=8)
+            
+            color_count = features.get("dominant_colors_count", 1)
+            color_entropy = features.get("color_entropy_rgb", 0)
+            ax4.set_title(f'(d) Hue Distribution (C: Color)\nDominant Colors: {color_count}\nEntropy: {color_entropy:.3f}', 
+                         fontsize=11, fontweight='bold')
+            ax4.axis('off')
+            
+            # ===== 5-8. Gabor filter responses (4 orientations) =====
+            gray_img = color.rgb2gray(image)
+            gabor_responses = []
+            orientations = [0, np.pi/4, np.pi/2, 3*np.pi/4]
+            orientation_names = ['0°', '45°', '90°', '135°']
+            
+            for theta in orientations:
+                gabor_kernel = cv2.getGaborKernel((31, 31), sigma=4, theta=theta, 
+                                                 lambd=10, gamma=0.5, psi=0)
+                filtered = cv2.filter2D(gray_img, cv2.CV_64F, gabor_kernel)
+                filtered_masked = filtered.copy()
+                filtered_masked[~mask] = 0
+                gabor_responses.append(filtered_masked)
+            
+            for idx, (response, orientation_name) in enumerate(zip(gabor_responses, orientation_names)):
+                ax = fig.add_subplot(gs[1, idx])
+                im = ax.imshow(response, cmap='viridis')
+                cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+                cbar.ax.tick_params(labelsize=7)
+                ax.set_title(f'(e-{idx+1}) Gabor Filter {orientation_name}', fontsize=10, fontweight='bold')
+                ax.axis('off')
+            
+            # ===== 9. Local Binary Pattern (LBP) =====
+            ax9 = fig.add_subplot(gs[2, 0])
+            gray_uint8 = (color.rgb2gray(image) * 255).astype(np.uint8)
+            lbp = local_binary_pattern(gray_uint8, P=8*3, R=3, method='uniform')
+            lbp_masked = lbp.copy()
+            lbp_masked[~mask] = 0
+            im9 = ax9.imshow(lbp_masked, cmap='gray')
+            cbar9 = plt.colorbar(im9, ax=ax9, fraction=0.046, pad=0.04)
+            cbar9.ax.tick_params(labelsize=8)
+            ax9.set_title('(f) Local Binary Pattern\n(Texture Analysis)', fontsize=11, fontweight='bold')
+            ax9.axis('off')
+            
+            # ===== 10. Gradient magnitude (Edge strength) =====
+            ax10 = fig.add_subplot(gs[2, 1])
+            gray_norm = color.rgb2gray(image)
+            sobelx = cv2.Sobel(gray_norm, cv2.CV_64F, 1, 0, ksize=3)
+            sobely = cv2.Sobel(gray_norm, cv2.CV_64F, 0, 1, ksize=3)
+            magnitude = np.sqrt(sobelx**2 + sobely**2)
+            magnitude_masked = magnitude.copy()
+            magnitude_masked[~mask] = 0
+            im10 = ax10.imshow(magnitude_masked, cmap='hot')
+            cbar10 = plt.colorbar(im10, ax=ax10, fraction=0.046, pad=0.04)
+            cbar10.ax.tick_params(labelsize=8)
+            
+            edge_mean = features.get("edge_strength_mean", 0)
+            ax10.set_title(f'(g) Edge Strength\n(Border Gradient)\nMean: {edge_mean:.3f}', 
+                          fontsize=11, fontweight='bold')
+            ax10.axis('off')
+            
+            # ===== 11. ABCDE Clinical Features Summary =====
+            ax11 = fig.add_subplot(gs[2, 2])
+            ax11.axis('off')
+            
+            abcde_text = f"""ABCDE Rule Features:
+
+A - Asymmetry:
+  • Horizontal: {features.get('asymmetry_horizontal', 0):.4f}
+  • Vertical: {features.get('asymmetry_vertical', 0):.4f}
+  • Diagonal: {features.get('asymmetry_diagonal', 0):.4f}
+
+B - Border:
+  • Compactness: {features.get('compactness', 0):.4f}
+  • Fractal Dim: {features.get('border_fractal_dimension', 1.0):.4f}
+  • Smoothness: {features.get('border_smoothness', 0):.4f}
+
+C - Color:
+  • Dominant colors: {features.get('dominant_colors_count', 1)}
+  • RGB entropy: {features.get('color_entropy_rgb', 0):.4f}
+  • Std deviation: {features.get('color_std', 0):.2f}
+
+D - Diameter:
+  • Equivalent: {features.get('equivalent_diameter', 0):.1f} px
+  • Major axis: {features.get('major_axis_length', 0):.1f} px
+  • Axis ratio: {features.get('axis_ratio', 1):.4f}
+
+E - Evolving (Texture):
+  • GLCM contrast: {features.get('glcm_contrast_d1_a0', 0):.4f}
+  • LBP uniformity: {features.get('lbp_uniformity', 0):.4f}
+            """
+            ax11.text(0.05, 0.5, abcde_text, fontsize=9, family='monospace',
+                    verticalalignment='center', 
+                    bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.4, pad=1))
+            ax11.set_title('(h) ABCDE Clinical Features', fontsize=11, fontweight='bold')
+            
+            # ===== 12. Key Feature Values Bar Chart =====
+            ax12 = fig.add_subplot(gs[2, 3])
+            
+            # Select most discriminative features for visualization
+            feature_display = {
+                'Compactness': features.get('compactness', 0),
+                'Asymmetry (H)': features.get('asymmetry_horizontal', 0),
+                'Fractal Dim': features.get('border_fractal_dimension', 1.0) - 1.0,  # Normalize
+                'Color Count': features.get('dominant_colors_count', 1) / 10.0,  # Scale
+                'Color Entropy': features.get('color_entropy_rgb', 0) / 8.0,  # Normalize
+                'GLCM Contrast': min(features.get('glcm_contrast_d1_a0', 0) / 100.0, 1.0),  # Clip
+                'Gabor Energy': min(features.get('gabor_t0_s3_f10_mean', 0) / 50.0, 1.0),  # Clip
+                'Axis Ratio': features.get('axis_ratio', 1),
+            }
+            
+            feature_names = list(feature_display.keys())
+            feature_values = list(feature_display.values())
+            
+            # Color bars based on value (green=low, yellow=medium, red=high)
+            colors_bar = []
+            for val in feature_values:
+                if val < 0.33:
+                    colors_bar.append('#2ecc71')  # Green
+                elif val < 0.67:
+                    colors_bar.append('#f39c12')  # Orange
+                else:
+                    colors_bar.append('#e74c3c')  # Red
+            
+            y_pos = np.arange(len(feature_names))
+            bars = ax12.barh(y_pos, feature_values, color=colors_bar, alpha=0.8, edgecolor='black', linewidth=0.5)
+            ax12.set_yticks(y_pos)
+            ax12.set_yticklabels(feature_names, fontsize=9)
+            ax12.set_xlabel('Normalized Feature Value', fontsize=10)
+            ax12.set_xlim(0, 1.0)
+            ax12.set_title('(i) Key Feature Values\n(Normalized)', fontsize=11, fontweight='bold')
+            ax12.grid(axis='x', alpha=0.3, linestyle='--')
+            ax12.axvline(x=0.5, color='gray', linestyle='--', linewidth=1, alpha=0.5)
+            
+            # Add value labels on bars
+            for i, (bar, val) in enumerate(zip(bars, feature_values)):
+                ax12.text(val + 0.02, i, f'{val:.3f}', va='center', fontsize=8)
+            
+            # Add main title
+            image_name = Path(image_path).stem
+            fig.suptitle(f'Comprehensive Feature Extraction Analysis for Skin Lesion Classification\nImage: {image_name}', 
+                        fontsize=14, fontweight='bold', y=0.995)
+            
+            # Auto-generate save path if not provided
+            if save_path is None:
+                output_dir = Path('output/features')
+                output_dir.mkdir(parents=True, exist_ok=True)
+                save_path = output_dir / f'{image_name}_feature_visualization.png'
+            
+            # Save figure
+            plt.savefig(save_path, dpi=dpi, bbox_inches='tight', facecolor='white')
+            self.logger.info(f"✅ Feature visualization saved to: {save_path}")
+            
+            plt.close(fig)
+            
+            return fig
+            
+        except Exception as e:
+            self.logger.error(f"Error creating feature visualization: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return None
+
+
+# Main execution for testing
+if __name__ == "__main__":
+    import sys
+    
+    # Set up logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    
+    # Create extractor
+    extractor = ConventionalFeatureExtractor()
+    
+    # Check if image path provided
+    if len(sys.argv) > 1:
+        image_path = sys.argv[1]
+        
+        # Optional: mask path
+        mask_path = sys.argv[2] if len(sys.argv) > 2 else None
+        
+        # Load mask if provided
+        mask = None
+        if mask_path and os.path.exists(mask_path):
+            mask_img = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+            mask = mask_img > 127
+            
+        # Generate visualization
+        print(f"\n{'='*60}")
+        print(f"Generating Feature Visualization")
+        print(f"{'='*60}")
+        print(f"Image: {image_path}")
+        if mask_path:
+            print(f"Mask: {mask_path}")
+        print(f"{'='*60}\n")
+        
+        fig = extractor.visualize_features_for_publication(
+            image_path=image_path,
+            mask=mask,
+            dpi=300
+        )
+        
+        if fig:
+            print("\n✅ Visualization completed successfully!")
+        else:
+            print("\n❌ Visualization failed!")
+    else:
+        # Demo with sample images
+        print("\n" + "="*60)
+        print("Feature Visualization Tool")
+        print("="*60)
+        print("\nUsage:")
+        print("  python conventional_features.py <image_path> [mask_path]")
+        print("\nExample:")
+        print("  python conventional_features.py data/bcc_segmented/ISIC_0000001.jpg")
+        print("  python conventional_features.py data/sk_segmented/ISIC_0000001.jpg mask.png")
+        print("="*60)
+        
+        # Try to find sample images
+        sample_paths = [
+            'data/bcc_segmented',
+            'data/sk_segmented',
+            'data/bcc',
+            'data/sk'
+        ]
+        
+        for sample_dir in sample_paths:
+            if os.path.exists(sample_dir):
+                import glob
+                images = glob.glob(f"{sample_dir}/*.jpg") + glob.glob(f"{sample_dir}/*.png")
+                if images:
+                    print(f"\n✨ Found sample images in {sample_dir}/")
+                    print(f"Running demo with: {images[0]}\n")
+                    
+                    fig = extractor.visualize_features_for_publication(
+                        image_path=images[0],
+                        dpi=300
+                    )
+                    
+                    if fig:
+                        print("\n✅ Demo visualization completed!")
+                    break

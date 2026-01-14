@@ -2205,7 +2205,33 @@ def visualize_preprocessing_steps(image_path, output_path=None):
             output_path = input_path.parent / f"{input_path.stem}_actual_preprocessing_steps.png"
         
         plt.savefig(output_path, dpi=300, bbox_inches='tight')
-        plt.close()
+        
+        # Save each subplot separately in a subfolder
+        individual_images_dir = Path(output_path).parent / "individual_preprocessing_steps"
+        os.makedirs(individual_images_dir, exist_ok=True)
+        
+        image_data = [
+            (original_image, '1_original_image'),
+            (grayscale_image, '2_grayscale_conversion'),
+            (blackhat_image, '3_blackhat_hair_detection'),
+            (inpainted_image, '4_hair_removal_inpainting'),
+            (final_preprocessed, '5_gaussian_smoothing_final')
+        ]
+        
+        for img_data, filename in image_data:
+            fig_single = plt.figure(figsize=(6, 6))
+            if len(img_data.shape) == 2 or (len(img_data.shape) == 3 and img_data.shape[2] == 1):
+                plt.imshow(img_data, cmap='gray')
+            else:
+                plt.imshow(img_data)
+            plt.axis('off')
+            plt.tight_layout()
+            single_path = individual_images_dir / f"{filename}.png"
+            plt.savefig(single_path, dpi=300, bbox_inches='tight', pad_inches=0)
+            plt.close()
+        
+        print(f"✅ Individual images saved to: {individual_images_dir}")
+        plt.close(fig)
 
            
         #Create Image Preprocessing Steps
@@ -2245,7 +2271,33 @@ def visualize_preprocessing_steps(image_path, output_path=None):
             output_path = input_path.parent / f"{input_path.stem}_image_preprocessing_steps.png"
         
         plt.savefig(output_path, dpi=300, bbox_inches='tight')
-        plt.close()
+        
+        # Save each subplot separately in a subfolder
+        individual_images_dir = Path(output_path).parent / "individual_image_preprocessing_steps"
+        os.makedirs(individual_images_dir, exist_ok=True)
+        
+        image_data = [
+            (not_segmented_image, '1_original_image'),
+            (original_image, '2_lesion_segmentation'),
+            (augmented_image, '3_augmented_image'),
+            (inpainted_image, '4_artifact_removal'),
+            (final_preprocessed, '5_noise_removing')
+        ]
+        
+        for img_data, filename in image_data:
+            fig_single = plt.figure(figsize=(6, 6))
+            if len(img_data.shape) == 2 or (len(img_data.shape) == 3 and img_data.shape[2] == 1):
+                plt.imshow(img_data, cmap='gray')
+            else:
+                plt.imshow(img_data)
+            plt.axis('off')
+            plt.tight_layout()
+            single_path = individual_images_dir / f"{filename}.png"
+            plt.savefig(single_path, dpi=300, bbox_inches='tight', pad_inches=0)
+            plt.close()
+        
+        print(f"✅ Individual preprocessing step images saved to: {individual_images_dir}")
+        plt.close(fig2)
 
 
         
@@ -2285,7 +2337,30 @@ def visualize_preprocessing_steps(image_path, output_path=None):
         
         before_after_path = Path(output_path).parent / f"{Path(output_path).stem}_comparison_inpainting_tech.png"
         plt.savefig(before_after_path, dpi=300, bbox_inches='tight')
-        plt.close()
+        
+        # Save each subplot separately in a subfolder
+        individual_images_dir = Path(output_path).parent / "individual_inpainting_comparison"
+        os.makedirs(individual_images_dir, exist_ok=True)
+        
+        image_data = [
+            (original_image, '1_before_original'),
+            (inpainted_image, '2_after_HR_TEL'),
+            (inpainted_image_by_bilateral_filter, '3_after_HR_BFI'),
+            (inpainted_image_by_bilateral_sech_filter, '4_after_HR_BFI_Sech'),
+            (inpainted_image_by_bilateral_le_versiera_filter, '5_after_HR_BFI_Laversial')
+        ]
+        
+        for img_data, filename in image_data:
+            fig_single = plt.figure(figsize=(6, 6))
+            plt.imshow(img_data)
+            plt.axis('off')
+            plt.tight_layout()
+            single_path = individual_images_dir / f"{filename}.png"
+            plt.savefig(single_path, dpi=300, bbox_inches='tight', pad_inches=0)
+            plt.close()
+        
+        print(f"✅ Individual inpainting comparison images saved to: {individual_images_dir}")
+        plt.close(fig3)
         
         print(f"✅ Actual preprocessing visualization saved to: {output_path}")
         print(f"✅ Before/after comparison saved to: {before_after_path}")
@@ -2369,6 +2444,7 @@ def apply_blackhat_morphology_with_visualization(grayscale_image, show_plots=Tru
 def main():
     print("Called Main visualize_preprocessing_steps...")
     visualize_preprocessing_steps("data/sk_segmented/ISIC_0025803_segmented.png", "processing_outputs/preprocessing_steps_output.png")
+    # visualize_preprocessing_steps("data/bcc_segmented/ISIC_0025803_segmented.png", "processing_outputs/preprocessing_steps_output.png")
     
 
 if __name__ == "__main__":
