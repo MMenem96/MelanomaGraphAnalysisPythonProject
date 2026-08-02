@@ -226,8 +226,12 @@ def main() -> int:
                     help="'lesion' = grouped (correct); 'image' = leaky comparison arm.")
     ap.add_argument("--balance", choices=["equalize", "capped4", "none"], default="equalize")
     ap.add_argument("--rotation-step", type=int, default=15)
-    ap.add_argument("--workers", type=int, default=8,
-                    help="Parallel extraction workers (1 = serial).")
+    ap.add_argument("--workers", type=int, default=6,
+                    help="Parallel extraction workers (1 = serial). Lower this if "
+                         "the machine starts swapping — workers killed under memory "
+                         "pressure used to wedge the whole run.")
+    ap.add_argument("--shard-size", type=int, default=250,
+                    help="Images per checkpointed shard. Smaller = less lost on a crash.")
     ap.add_argument("--test-size", type=float, default=DEFAULT_TEST_SIZE)
     ap.add_argument("--random-state", type=int, default=DEFAULT_RANDOM_STATE)
     ap.add_argument("--limit-per-class", type=int, default=None,
@@ -269,40 +273,70 @@ def main() -> int:
     LOG.info("Building per-λ extractors for: %s", chosen)
     _worker_init(chosen)   # also primes the parent process
 
-    def run_pass(pass_samples: list[Sample], tags_for, label: str) -> dict[str, list[dict]]:
-        rows_per_lambda: dict[str, list[dict]] = {n: [] for n in chosen}
+    shard_dir = args.out_dir / "shards" / suffix
+    shard_dir.mkdir(parents=True, exist_ok=True)
+
+    def run_pass(pass_samples: list[Sample], tags_for, label: str) -> dict[str, pd.DataFrame]:
+        """Extract in shards, checkpointing each to disk.
+
+        A 3-hour run previously held every row in the parent process until the
+        very end; when the OS killed the workers under memory pressure the pool
+        deadlocked and all the work was lost. Now each shard is converted to a
+        DataFrame (far cheaper than a list of dicts), written to disk, and freed.
+        Re-running skips shards already on disk, so a crash costs one shard.
+        """
         tasks = [(s, tuple(tags_for(s))) for s in pass_samples]
+        n_shards = math.ceil(len(tasks) / args.shard_size)
         started = time.time()
         done = 0
 
-        if args.workers <= 1:
-            results = map(_worker_process, tasks)
-            ctx = None
-        else:
-            ctx = ProcessPoolExecutor(
-                max_workers=args.workers,
-                initializer=_worker_init,
-                initargs=(chosen,),
-            )
-            results = ctx.map(_worker_process, tasks, chunksize=4)
+        for si in range(n_shards):
+            paths = {n: shard_dir / f"{label}_{n}_{si:04d}.pkl" for n in chosen}
+            chunk = tasks[si * args.shard_size: (si + 1) * args.shard_size]
+            if all(p.is_file() for p in paths.values()):
+                done += len(chunk)
+                LOG.info("  %s  shard %d/%d already on disk — skipping (%d/%d imgs)",
+                         label, si + 1, n_shards, done, len(tasks))
+                continue
 
-        try:
-            for got in results:
-                for n in chosen:
-                    rows_per_lambda[n].extend(got[n])
-                done += 1
-                if done % 100 == 0:
-                    elapsed = time.time() - started
-                    rate = done / elapsed
-                    eta = (len(tasks) - done) / rate / 60.0
-                    LOG.info("  %s  %d/%d  (%.2f img/s, ETA %.1f min)",
-                             label, done, len(tasks), rate, eta)
-        finally:
-            if ctx is not None:
-                ctx.shutdown()
+            rows: dict[str, list[dict]] = {n: [] for n in chosen}
+            if args.workers <= 1:
+                results = map(_worker_process, chunk)
+                ctx = None
+            else:
+                ctx = ProcessPoolExecutor(max_workers=args.workers,
+                                          initializer=_worker_init, initargs=(chosen,))
+                results = ctx.map(_worker_process, chunk, chunksize=2)
+            try:
+                for got in results:
+                    for n in chosen:
+                        rows[n].extend(got[n])
+                    done += 1
+            finally:
+                # A fresh pool per shard: a killed worker can no longer wedge the
+                # whole run, and worker memory is reclaimed between shards.
+                if ctx is not None:
+                    ctx.shutdown()
 
-        LOG.info("%s pass done in %.1f min", label, (time.time() - started) / 60.0)
-        return rows_per_lambda
+            for n in chosen:
+                pd.DataFrame(rows[n]).to_pickle(paths[n])
+            del rows
+
+            elapsed = time.time() - started
+            rate = done / elapsed if elapsed else 0.0
+            eta = (len(tasks) - done) / rate / 60.0 if rate else float("nan")
+            LOG.info("  %s  shard %d/%d written  (%d/%d imgs, %.2f img/s, ETA %.1f min)",
+                     label, si + 1, n_shards, done, len(tasks), rate, eta)
+
+        LOG.info("%s pass done in %.1f min — merging %d shards",
+                 label, (time.time() - started) / 60.0, n_shards)
+        merged: dict[str, pd.DataFrame] = {}
+        for n in chosen:
+            parts = [pd.read_pickle(shard_dir / f"{label}_{n}_{si:04d}.pkl")
+                     for si in range(n_shards)]
+            parts = [p for p in parts if not p.empty]
+            merged[n] = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
+        return merged
 
     LOG.info("--- TRAIN PASS ---")
     train_rows = run_pass(train_samples, lambda s: policy[s.dx], "TRAIN")
@@ -325,8 +359,8 @@ def main() -> int:
     }
 
     for n in chosen:
-        tr = pd.DataFrame(train_rows[n])
-        te = pd.DataFrame(test_rows[n])
+        tr = train_rows[n]
+        te = test_rows[n]
         if tr.empty or te.empty:
             LOG.error("λ=%s produced empty frames (train=%d, test=%d)", n, len(tr), len(te))
             return 1

@@ -288,6 +288,14 @@ def main() -> int:
             row["n_features"] = k
             all_rows.append(row)
 
+            # Write after EVERY classifier, not just at the end: an overnight run
+            # that dies on classifier 7 of 9 must not lose the first six.
+            args.results_dir.mkdir(parents=True, exist_ok=True)
+            partial = args.results_dir / f"results7_{args.suffix}_{timestamp}.csv"
+            pd.DataFrame(all_rows).to_csv(partial, index=False)
+            LOG.info("    (partial results saved: %d classifier(s) → %s)",
+                     len(all_rows), partial.name)
+
     if not all_rows:
         LOG.error("No classifier produced a result.")
         return 1
