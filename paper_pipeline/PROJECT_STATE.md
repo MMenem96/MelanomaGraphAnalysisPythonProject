@@ -151,6 +151,25 @@ split after balancing or split at image level. We should expect our numbers to
 be **lower than Track A's 93.50%**, and that is the correct, expected outcome —
 not a failure.
 
+### Overnight run launched 2026-08-03 00:18
+
+`nohup bash paper_pipeline/scripts/run_overnight7.sh &` — 4 stages, all resumable:
+
+1. extraction, lesion-grouped + equalise (supervised, auto-resumes from shards)
+2. train + evaluate 9 classifiers on that arm
+3. extraction, image-level split (leaky comparison arm)
+4. train + evaluate 9 classifiers on the comparison arm
+
+Watch: `paper_pipeline/output/logs/overnight7_master.log`.
+Results land in `paper_pipeline/output/results7/*.csv`.
+
+**Hard lesson recorded:** the first extraction attempt held all 37,667 rows in
+the parent process and wrote nothing until the end; workers were killed under
+memory pressure, `ProcessPoolExecutor` deadlocked silently, and 3 hours were
+lost. A hang produces no error and no exit, so process-liveness checks do not
+catch it — the watchdog keys on log silence instead. Any long run in this repo
+should checkpoint to disk.
+
 ### Current state — where we stopped
 
 - [x] Literature sweep → `SEVEN_CLASS_PROTOCOL.md`
