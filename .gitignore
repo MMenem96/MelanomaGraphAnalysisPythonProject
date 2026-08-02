@@ -39,6 +39,10 @@ static/results/
 data/canonical7/
 paper_pipeline/output/
 
+# Archived data (1.8 GB of lesion jpgs) — the archived SCRIPTS are tracked.
+ARCHIVE/data/
+ARCHIVE/**/.DS_Store
+
 # Editor
 .vscode/
 .idea/
