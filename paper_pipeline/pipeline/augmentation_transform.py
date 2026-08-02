@@ -64,8 +64,58 @@ def variants(image: np.ndarray, tags: Iterable[str]) -> list[tuple[str, np.ndarr
         elif t == TAG_ROT_M15:
             out.append((t, _rotate(image, -15.0)))
         else:
-            raise ValueError(f"Unknown augmentation tag {t!r}")
+            # Composite tags (7-class equalisation) — see `apply_tag`.
+            out.append((t, apply_tag(image, t)))
     return out
+
+
+# ---------------------------------------------------------------------------
+# Composite tags for the 7-class protocol.
+#
+# Equalising class sizes needs more than the 4 flip variants, so tags may
+# combine a flip with a rotation:  "<flip>[_rot<deg>]"  where <flip> is one of
+# orig | h_flip | v_flip | hv_flip and <deg> is a signed integer, e.g.
+# "hv_flip_rot120", "orig_rot15". The binary tags above are untouched.
+# ---------------------------------------------------------------------------
+
+_FLIP_CODES = {
+    "orig": None,
+    "h_flip": 1,
+    "v_flip": 0,
+    "hv_flip": -1,
+}
+
+
+def apply_tag(image: np.ndarray, tag: str) -> np.ndarray:
+    """Apply a composite '<flip>[_rot<deg>]' tag to an image."""
+    flip_part, _, rot_part = tag.partition("_rot")
+    if flip_part not in _FLIP_CODES:
+        raise ValueError(f"Unknown augmentation tag {tag!r}")
+    code = _FLIP_CODES[flip_part]
+    out = image if code is None else cv2.flip(image, code)
+    if rot_part:
+        try:
+            degrees = float(rot_part)
+        except ValueError:
+            raise ValueError(f"Unknown augmentation tag {tag!r}") from None
+        if degrees:
+            out = _rotate(out, degrees)
+    return out
+
+
+def build_tag_pool(rotation_step: int = 15) -> list[str]:
+    """Deterministic augmentation op pool, ordered cheapest-first.
+
+    The four flips come first (no interpolation, no white-fill corners), then
+    each rotation crossed with the four flips. With the default 15-degree step
+    this yields 4 + 4*23 = 96 distinct variants — enough to equalise `df`
+    (58x needed) without repeating an op.
+    """
+    pool = list(_FLIP_CODES)
+    for degrees in range(rotation_step, 360, rotation_step):
+        for flip in _FLIP_CODES:
+            pool.append(f"{flip}_rot{degrees}")
+    return pool
 
 
 def mask_variants(mask: np.ndarray, tags: Iterable[str]) -> list[tuple[str, np.ndarray]]:
