@@ -1,0 +1,82 @@
+# Paper pipeline configuration.
+# All knobs the experiment uses live here. The orchestrator and individual
+# stages read from this file so paper numbers stay reproducible.
+
+dataset:
+  # Original HAM10000 release on Harvard Dataverse (frozen, 10,015 images).
+  doi: "10.7910/DVN/DBW86T"
+  metadata_dataverse_url: "https://dataverse.harvard.edu/api/access/datafile/3172585"
+  expected_total_images: 10015
+  expected_bcc: 514
+  expected_bkl: 1099
+
+paths:
+  # All paths are relative to the project root.
+  raw_images_bcc: "data/bcc"
+  raw_images_sk: "data/sk"
+  masks_dir: "data/HAM10000_binary_mask"
+  metadata_csv: "data/HAM10000_metadata.csv"
+  canonical_dir: "data/canonical"
+  bcc_ids_file: "data/canonical/bcc_ids.txt"
+  bkl_ids_file: "data/canonical/bkl_ids.txt"
+  bcc_segmented_dir: "data/canonical/bcc_segmented"
+  bkl_segmented_dir: "data/canonical/bkl_segmented"
+  features_dir: "paper_pipeline/output/features"
+  results_dir: "paper_pipeline/output/results"
+  qa_dir: "paper_pipeline/output/qa"
+
+preprocessing:
+  target_size: [224, 224]
+  hair_removal: true              # uses SkinLesionProcessor + Telea inpainting
+  inpaint_radius: 3
+  gaussian_sigma: 0.8
+
+augmentation:
+  # Applied ONLY to training images, AFTER the stratified 80/20 split.
+  enabled: true
+  flips: ["horizontal", "vertical"]   # cv2.flip(img, 1) and cv2.flip(img, 0)
+  # Each training image produces 1 (original) + len(flips) features rows.
+
+split:
+  test_size: 0.2
+  random_state: 42
+  stratify: true
+
+mkt:
+  # The reciprocal low-pass eigenvalue config (paper's optimal).
+  # Code computes lambda = 1.0/k for k=1..N, equivalent to 1/(k+1) for k=0..N-1.
+  N: 64
+  p: 0.5
+
+feature_selection:
+  method: "mutual_info"
+  n_features: 360
+  # Fit on TRAIN only; applied to test.
+
+scaling:
+  method: "robust"                  # RobustScaler
+  # Fit on TRAIN only; applied to test.
+
+cross_validation:
+  enabled: true
+  method: "stratified_kfold"
+  n_splits: 5
+  scoring: ["accuracy", "f1", "precision", "recall", "roc_auc"]
+
+classifiers:
+  # The exact 9 named in the paper abstract. All 9 must appear in every results row.
+  active:
+    - "SVM (RBF)"
+    - "LightGBM"
+    - "CatBoost"
+    - "Gradient Boosting"
+    - "Extra Trees"
+    - "KNN"
+    - "Logistic Regression"
+    - "MLP"
+    - "Deep DNN"
+
+experiment:
+  random_state: 42
+  # Audit: the test set is touched ONCE per (mkt_config, classifier) tuple.
+  # No iterative tuning on test scores.
