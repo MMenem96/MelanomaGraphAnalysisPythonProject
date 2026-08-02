@@ -32,6 +32,7 @@ import math
 import sys
 import time
 from collections import Counter, defaultdict
+from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
@@ -182,6 +183,36 @@ def log_policy(train: list[Sample], policy: dict[str, tuple[str, ...]]) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Parallel workers
+#
+# The feature extractors hold OpenCV/sklearn state that does not pickle well,
+# so each worker builds its own set once via the pool initializer and keeps it
+# in module-level globals.
+# ---------------------------------------------------------------------------
+
+_BASE_EXTRACTOR: ConventionalFeatureExtractor | None = None
+_LAMBDA_EXTRACTORS: dict[str, _LambdaScopedExtractor] = {}
+
+
+def _worker_init(lambda_names: list[str]) -> None:
+    global _BASE_EXTRACTOR, _LAMBDA_EXTRACTORS
+    _BASE_EXTRACTOR = ConventionalFeatureExtractor()
+    _LAMBDA_EXTRACTORS = {n: _LambdaScopedExtractor(LAMBDA_CONFIGS[n]) for n in lambda_names}
+
+
+def _worker_process(task: tuple[Sample, tuple[str, ...]]) -> dict[str, list[dict]]:
+    sample, tags = task
+    got = _process_sample_for_all_lambdas(
+        sample, tags, _BASE_EXTRACTOR, _LAMBDA_EXTRACTORS, save_qa=False
+    )
+    for rows in got.values():
+        for row in rows:
+            row["lesion_id"] = sample.lesion_id
+            row["dx"] = sample.dx
+    return got
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -195,6 +226,8 @@ def main() -> int:
                     help="'lesion' = grouped (correct); 'image' = leaky comparison arm.")
     ap.add_argument("--balance", choices=["equalize", "capped4", "none"], default="equalize")
     ap.add_argument("--rotation-step", type=int, default=15)
+    ap.add_argument("--workers", type=int, default=8,
+                    help="Parallel extraction workers (1 = serial).")
     ap.add_argument("--test-size", type=float, default=DEFAULT_TEST_SIZE)
     ap.add_argument("--random-state", type=int, default=DEFAULT_RANDOM_STATE)
     ap.add_argument("--limit-per-class", type=int, default=None,
@@ -234,27 +267,40 @@ def main() -> int:
     policy_info = log_policy(train_samples, policy)
 
     LOG.info("Building per-λ extractors for: %s", chosen)
-    base_extractor = ConventionalFeatureExtractor()
-    lambda_extractors = {n: _LambdaScopedExtractor(LAMBDA_CONFIGS[n]) for n in chosen}
+    _worker_init(chosen)   # also primes the parent process
 
     def run_pass(pass_samples: list[Sample], tags_for, label: str) -> dict[str, list[dict]]:
         rows_per_lambda: dict[str, list[dict]] = {n: [] for n in chosen}
+        tasks = [(s, tuple(tags_for(s))) for s in pass_samples]
         started = time.time()
-        for i, sample in enumerate(pass_samples):
-            got = _process_sample_for_all_lambdas(
-                sample, tags_for(sample), base_extractor, lambda_extractors, save_qa=False
+        done = 0
+
+        if args.workers <= 1:
+            results = map(_worker_process, tasks)
+            ctx = None
+        else:
+            ctx = ProcessPoolExecutor(
+                max_workers=args.workers,
+                initializer=_worker_init,
+                initargs=(chosen,),
             )
-            for n in chosen:
-                for row in got[n]:
-                    row["lesion_id"] = sample.lesion_id
-                    row["dx"] = sample.dx
-                rows_per_lambda[n].extend(got[n])
-            if (i + 1) % 100 == 0:
-                elapsed = time.time() - started
-                rate = (i + 1) / elapsed
-                eta = (len(pass_samples) - i - 1) / rate / 60.0
-                LOG.info("  %s  %d/%d  (%.2f img/s, ETA %.1f min)",
-                         label, i + 1, len(pass_samples), rate, eta)
+            results = ctx.map(_worker_process, tasks, chunksize=4)
+
+        try:
+            for got in results:
+                for n in chosen:
+                    rows_per_lambda[n].extend(got[n])
+                done += 1
+                if done % 100 == 0:
+                    elapsed = time.time() - started
+                    rate = done / elapsed
+                    eta = (len(tasks) - done) / rate / 60.0
+                    LOG.info("  %s  %d/%d  (%.2f img/s, ETA %.1f min)",
+                             label, done, len(tasks), rate, eta)
+        finally:
+            if ctx is not None:
+                ctx.shutdown()
+
         LOG.info("%s pass done in %.1f min", label, (time.time() - started) / 60.0)
         return rows_per_lambda
 
