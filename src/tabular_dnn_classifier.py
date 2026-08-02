@@ -22,6 +22,11 @@ from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.utils.validation import check_X_y, check_array, check_is_fitted
 from sklearn.utils.class_weight import compute_class_weight
 import warnings
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+from matplotlib.patches import FancyBboxPatch, FancyArrowPatch
+from pathlib import Path
+import os
 
 warnings.filterwarnings('ignore', category=UserWarning)
 
@@ -525,6 +530,430 @@ class TabularDNNClassifier(BaseEstimator, ClassifierMixin):
         for key, value in params.items():
             setattr(self, key, value)
         return self
+
+    def visualize_architecture(self, save_path=None, dpi=300, style='neurons'):
+        """
+        Create publication-quality visualization of the DNN architecture.
+        
+        Args:
+            save_path (str, optional): Path to save the figure. Auto-generated if None.
+            dpi (int): Resolution for publication quality (default: 300)
+            style (str): 'neurons' for traditional neuron diagram, 'blocks' for architecture blocks
+            
+        Returns:
+            matplotlib.figure.Figure: The generated figure
+        """
+        if style == 'neurons':
+            return self._visualize_neurons(save_path, dpi)
+        else:
+            return self._visualize_blocks(save_path, dpi)
+    
+    def _visualize_neurons(self, save_path=None, dpi=300):
+        """
+        Create traditional neuron-based network diagram like academic papers.
+        Shows individual neurons, connections, weight matrices, and activation functions.
+        """
+        try:
+            fig, ax = plt.subplots(figsize=(18, 7))
+            ax.set_xlim(0, 10)
+            ax.set_ylim(0, 10)
+            ax.axis('off')
+            
+            # Define vibrant but professional colors for layers (scientific palette)
+            layer_colors = [
+                '#FFE5CC',  # Peach - Input
+                '#CCE5FF',  # Light Blue - Hidden 1
+                '#FFFFCC',  # Light Yellow - Hidden 2
+                '#CCFFDD',  # Light Green - Hidden 3
+                '#FFCCFF',  # Light Pink - Hidden 4
+                '#FFCCCC',  # Light Red - Hidden 5
+                '#CCFFFF',  # Cyan - Hidden 6
+                '#FFE5DD',  # Light Peach - Hidden 7
+                '#E5E5E5'   # Light Gray - Output
+            ]
+            
+            # Calculate layer positions
+            layers = [self.input_dim] + self.hidden_units + [1]  # Include input and output
+            n_layers = len(layers)
+            
+            # Horizontal spacing
+            x_positions = np.linspace(0.7, 9.3, n_layers)
+            
+            # Maximum neurons to display per layer (for visualization clarity)
+            max_display_neurons = 5
+            
+            # Store neuron positions for drawing connections
+            neuron_positions = []
+            
+            # ========== Draw each layer ==========
+            for layer_idx, (n_neurons, x_pos) in enumerate(zip(layers, x_positions)):
+                # Determine how many neurons to actually draw
+                n_display = min(n_neurons, max_display_neurons)
+                show_ellipsis = n_neurons > max_display_neurons
+                
+                # Calculate vertical positions
+                y_center = 5.0
+                if n_display == 1:
+                    y_positions = [y_center]
+                else:
+                    y_spacing = min(4.0 / n_display, 0.95)
+                    y_start = y_center - (n_display - 1) * y_spacing / 2
+                    y_positions = [y_start + i * y_spacing for i in range(n_display)]
+                
+                layer_neurons = []
+                
+                # Draw layer background first
+                if n_display >= 1:
+                    y_min = min(y_positions) - 0.55 if n_display > 1 else y_positions[0] - 0.55
+                    y_max = max(y_positions) + 0.55 if n_display > 1 else y_positions[0] + 0.55
+                    width = 0.65
+                    rect = FancyBboxPatch(
+                        (x_pos - width/2, y_min), width, y_max - y_min,
+                        boxstyle="round,pad=0.05",
+                        facecolor=layer_colors[layer_idx % len(layer_colors)],
+                        edgecolor='#333',
+                        linewidth=1.5,
+                        alpha=0.7,
+                        zorder=1
+                    )
+                    ax.add_patch(rect)
+                
+                # Draw neurons
+                for i, y_pos in enumerate(y_positions):
+                    # Draw circle for neuron
+                    circle = plt.Circle((x_pos, y_pos), 0.18, 
+                                       facecolor='white', 
+                                       edgecolor='black', 
+                                       linewidth=2.2, 
+                                       zorder=3)
+                    ax.add_patch(circle)
+                    layer_neurons.append((x_pos, y_pos))
+                
+                # Draw ellipsis if needed
+                if show_ellipsis:
+                    ellipsis_y = y_positions[-1] - 0.65
+                    ax.text(x_pos, ellipsis_y, '⋮', 
+                           ha='center', va='center', fontsize=20, fontweight='bold', zorder=2, color='#000')
+                
+                neuron_positions.append(layer_neurons)
+                
+                # ========== Draw connections to previous layer ==========
+                if layer_idx > 0:
+                    prev_neurons = neuron_positions[layer_idx - 1]
+                    curr_neurons = neuron_positions[layer_idx]
+                    
+                    # Draw professional connections - showing fully connected pattern
+                    # Draw all connections but with varying alpha based on position
+                    for i, (x1, y1) in enumerate(prev_neurons):
+                        for j, (x2, y2) in enumerate(curr_neurons):
+                            # Emphasize edge connections, make middle ones lighter
+                            if (i == 0 and j == 0) or (i == len(prev_neurons)-1 and j == len(curr_neurons)-1):
+                                # Edge to edge - most prominent
+                                alpha = 0.5
+                                linewidth = 1.2
+                            elif i in [0, len(prev_neurons)-1] or j in [0, len(curr_neurons)-1]:
+                                # Connections involving edge neurons
+                                alpha = 0.3
+                                linewidth = 0.9
+                            else:
+                                # Middle connections - lighter
+                                alpha = 0.15
+                                linewidth = 0.7
+                            
+                            ax.plot([x1 + 0.18, x2 - 0.18], [y1, y2], 
+                                   'k-', linewidth=linewidth, alpha=alpha, zorder=0)
+                    
+                    # Draw weight matrix label
+                    x_mid = (x_positions[layer_idx-1] + x_pos) / 2
+                    y_top = 7.5
+                    ax.text(x_mid, y_top, f'$W_{{{layer_idx}}}$', 
+                           ha='center', va='center', fontsize=14, 
+                           style='italic', fontweight='bold', color='#000')
+                    
+                    # Add activation function label (except for last layer)
+                    if layer_idx < n_layers - 1:
+                        activation_label = self.activation.upper() if hasattr(self, 'activation') else 'SWISH'
+                        ax.text(x_pos, 1.8, activation_label, 
+                               ha='center', va='center', fontsize=14, 
+                               style='italic', color='#000', fontweight='bold')
+            
+            # ========== Add layer labels ==========
+            # Input layer
+            ax.text(x_positions[0], 8.3, 'Input', ha='center', fontsize=14, fontweight='bold')
+            ax.text(x_positions[0], 7.95, f'{self.input_dim}', ha='center', fontsize=14, color='#555')
+            
+            # Hidden layers
+            for i in range(1, n_layers - 1):
+                ax.text(x_positions[i], 8.3, f'Hidden {i}', ha='center', fontsize=14, fontweight='bold')
+                ax.text(x_positions[i], 7.95, f'{layers[i]} neurons', ha='center', fontsize=14, color='#555')
+            
+            # Output layer with sigmoid activation
+            ax.text(x_positions[-1], 8.3, 'Output', ha='center', fontsize=14, fontweight='bold')
+            ax.text(x_positions[-1], 7.95, 'BCC/BKL', ha='center', fontsize=14, color='#555')
+            ax.text(x_positions[-1], 1.8, 'Sigmoid', 
+                   ha='center', va='center', fontsize=14, style='italic', color='#000', fontweight='bold')
+            
+            # ========== Title ==========
+            title = 'Deep Neural Network Architecture'
+            subtitle = f'{self.input_dim} Input Features → {len(self.hidden_units)} Hidden Layers → Binary Classification'
+            ax.text(5, 9.4, title, ha='center', fontsize=14, fontweight='bold')
+            ax.text(5, 9.0, subtitle, ha='center', fontsize=14, color='#444')
+            
+            plt.tight_layout()
+            
+            # Save figure
+            if save_path is None:
+                output_dir = Path('output/architecture')
+                output_dir.mkdir(parents=True, exist_ok=True)
+                save_path = output_dir / 'dnn_neuron_diagram.png'
+            else:
+                os.makedirs(os.path.dirname(save_path), exist_ok=True)
+            
+            plt.savefig(save_path, dpi=dpi, bbox_inches='tight', transparent=True)
+            print(f"✅ Neuron-based DNN diagram saved to: {save_path}")
+            
+            plt.close(fig)
+            return fig
+            
+        except Exception as e:
+            print(f"❌ Error creating neuron visualization: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return None
+    
+    def _visualize_blocks(self, save_path=None, dpi=300):
+        """Original block-based architecture visualization (kept for reference)"""
+        try:
+            # Create figure
+            if style == 'detailed':
+                fig, ax = plt.subplots(figsize=(18, 10))
+            else:
+                fig, ax = plt.subplots(figsize=(14, 8))
+            
+            ax.set_xlim(0, 10)
+            ax.set_ylim(0, 10)
+            ax.axis('off')
+            
+            # Define colors for different layer types
+            colors = {
+                'input': '#ff7f0e',      # Orange
+                'dense': '#1f77b4',      # Blue
+                'residual': '#2ca02c',   # Green
+                'attention': '#d62728',  # Red
+                'dropout': '#9467bd',    # Purple
+                'batchnorm': '#8c564b',  # Brown
+                'output': '#2ca02c'      # Green
+            }
+            
+            # Calculate layer positions
+            n_blocks = sum([2 if i < len(self.hidden_units) - 1 else 1 for i in range(len(self.hidden_units))])
+            total_sections = 2 + n_blocks + (1 if self.use_attention else 0) + 1  # input + embedding + residual blocks + attention + pre-output + output
+            
+            x_start = 0.8
+            x_end = 9.2
+            x_spacing = (x_end - x_start) / total_sections
+            y_center = 5
+            
+            current_x = x_start
+            layer_info = []
+            
+            # ========== Input Layer ==========
+            self._draw_layer_node(
+                ax, current_x, y_center, 
+                f'Input\\n{self.input_dim}\\nfeatures',
+                colors['input'], 0.6, 1.0, size=14
+            )
+            layer_info.append((current_x, y_center))
+            current_x += x_spacing
+            
+            # ========== Embedding Layer ==========
+            self._draw_layer_node(
+                ax, current_x, y_center,
+                f'Dense {self.hidden_units[0]}\\nBN+{self.activation[:4]}\\nDrop({self.dropout_rate:.1f})',
+                colors['dense'], 0.6, 1.0, size=14
+            )
+            self._draw_arrow(ax, layer_info[-1][0] + 0.3, layer_info[-1][1], 
+                           current_x - 0.3, y_center)
+            layer_info.append((current_x, y_center))
+            current_x += x_spacing * 1.2
+            
+            # ========== Residual Blocks ==========
+            for i, units in enumerate(self.hidden_units):
+                layer_dropout = self.dropout_rate * (1 - 0.3 * i / len(self.hidden_units))
+                
+                # Draw residual block with skip connection
+                self._draw_residual_block_compact(
+                    ax, current_x, y_center, units, layer_dropout, 
+                    layer_info[-1], colors, i
+                )
+                
+                layer_info.append((current_x, y_center))
+                current_x += x_spacing * 1.2
+                
+                # Second block for non-final layers
+                if i < len(self.hidden_units) - 1:
+                    self._draw_residual_block_compact(
+                        ax, current_x, y_center, units, layer_dropout,
+                        layer_info[-1], colors, f'{i}b'
+                    )
+                    layer_info.append((current_x, y_center))
+                    current_x += x_spacing * 1.2
+            
+            # ========== Attention Mechanism ==========
+            if self.use_attention:
+                # Draw attention box
+                self._draw_layer_node(
+                    ax, current_x, y_center + 1.2,
+                    f'Attention\\nWeights',
+                    colors['attention'], 0.5, 0.7, size=9
+                )
+                self._draw_arrow(ax, layer_info[-1][0] + 0.3, layer_info[-1][1],
+                               current_x - 0.25, y_center + 1.2, style='dashed')
+                
+                # Multiply node
+                self._draw_layer_node(
+                    ax, current_x, y_center,
+                    '×',
+                    colors['attention'], 0.4, 0.4, size=14
+                )
+                self._draw_arrow(ax, current_x, y_center + 0.85, current_x, y_center + 0.2)
+                self._draw_arrow(ax, layer_info[-1][0] + 0.3, layer_info[-1][1],
+                               current_x - 0.2, y_center)
+                
+                layer_info.append((current_x, y_center))
+                current_x += x_spacing
+            
+            # ========== Pre-output ==========
+            self._draw_layer_node(
+                ax, current_x, y_center,
+                f'Dense 64\\nBN+{self.activation[:4]}',
+                colors['dense'], 0.5, 0.9, size=9
+            )
+            self._draw_arrow(ax, layer_info[-1][0] + 0.3, layer_info[-1][1],
+                           current_x - 0.25, y_center)
+            layer_info.append((current_x, y_center))
+            current_x += x_spacing
+            
+            # ========== Output Layer ==========
+            self._draw_layer_node(
+                ax, current_x, y_center,
+                f'Output\\n1 unit\\nSigmoid',
+                colors['output'], 0.6, 1.0, size=14
+            )
+            self._draw_arrow(ax, layer_info[-1][0] + 0.25, layer_info[-1][1],
+                           current_x - 0.3, y_center, linewidth=2)
+            
+            # ========== Title ==========
+            title = 'Deep Residual Neural Network Architecture for Skin Lesion Classification'
+            ax.text(5, 9.3, title, ha='center', fontsize=14, fontweight='bold')
+            
+            subtitle = f'Features: {self.input_dim} → Hidden Layers: {self.hidden_units} → Binary Output (BCC/BKL)'
+            ax.text(5, 8.8, subtitle, ha='center', fontsize=14, style='italic')
+            
+            # ========== Architecture Details Box ==========
+            details = [
+                f'Architecture Components:',
+                f'• Residual Blocks: Skip connections for gradient flow',
+                f'• Batch Normalization: Training stabilization',
+                f'• {self.activation.upper()} Activation: Non-linear transformations',
+                f'• Dropout: {self.dropout_rate} (adaptive per layer)',
+                f'• Self-Attention: {"Enabled" if self.use_attention else "Disabled"}',
+                f'• Regularization: L2 = {self.l2_reg}',
+                f'• Loss Function: Focal Loss (α={self.focal_loss_alpha}, γ={self.focal_loss_gamma})',
+                f'• Training: Mixup augmentation (α={self.mixup_alpha})'
+            ]
+            details_text = '\\n'.join(details)
+            
+            ax.text(0.3, 2.5, details_text, fontsize=14, family='monospace',
+                   bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.2, pad=0.5),
+                   verticalalignment='top')
+            
+            # ========== Legend ==========
+            legend_elements = [
+                mpatches.Patch(facecolor=colors['input'], edgecolor='black', label='Input'),
+                mpatches.Patch(facecolor=colors['dense'], edgecolor='black', label='Dense Layer'),
+                mpatches.Patch(facecolor=colors['residual'], edgecolor='black', label='Residual Block'),
+            ]
+            if self.use_attention:
+                legend_elements.append(mpatches.Patch(facecolor=colors['attention'], edgecolor='black', label='Attention'))
+            legend_elements.append(mpatches.Patch(facecolor=colors['output'], edgecolor='black', label='Output'))
+            
+            ax.legend(handles=legend_elements, loc='lower right', fontsize=14, framealpha=0.9)
+            
+            plt.tight_layout()
+            
+            # Save figure
+            if save_path is None:
+                output_dir = Path('output/architecture')
+                output_dir.mkdir(parents=True, exist_ok=True)
+                save_path = output_dir / 'dnn_architecture_visualization.png'
+            else:
+                os.makedirs(os.path.dirname(save_path), exist_ok=True)
+            
+            plt.savefig(save_path, dpi=dpi, bbox_inches='tight', facecolor='white')
+            print(f"✅ DNN architecture visualization saved to: {save_path}")
+            
+            plt.close(fig)
+            return fig
+            
+        except Exception as e:
+            print(f"❌ Error creating architecture visualization: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return None
+    
+    def _draw_layer_node(self, ax, x, y, text, color, width=0.6, height=0.8, size=11):
+        """Draw a layer node as a rounded rectangle"""
+        rect = FancyBboxPatch(
+            (x - width/2, y - height/2), width, height,
+            boxstyle="round,pad=0.05", 
+            facecolor=color, edgecolor='black', linewidth=1.5,
+            alpha=0.8
+        )
+        ax.add_patch(rect)
+        ax.text(x, y, text, ha='center', va='center', fontsize=size,
+               fontweight='bold', color='white')
+    
+    def _draw_arrow(self, ax, x1, y1, x2, y2, style='solid', linewidth=1.5):
+        """Draw an arrow between layers"""
+        arrow = FancyArrowPatch(
+            (x1, y1), (x2, y2),
+            arrowstyle='->', mutation_scale=15, 
+            linewidth=linewidth, color='black', linestyle=style,
+            alpha=0.7
+        )
+        ax.add_patch(arrow)
+    
+    def _draw_residual_block_compact(self, ax, x, y, units, dropout, prev_info, colors, idx):
+        """Draw a compact residual block with skip connection"""
+        # Main path (top)
+        y_main = y + 0.9
+        self._draw_layer_node(
+            ax, x, y_main,
+            f'{units}',
+            colors['residual'], 0.5, 0.6, size=14
+        )
+        
+        # Draw arrows
+        prev_x, prev_y = prev_info
+        self._draw_arrow(ax, prev_x + 0.3, prev_y, x - 0.25, y_main, 'solid', 1.2)
+        
+        # Skip connection (curved)
+        arrow_skip = FancyArrowPatch(
+            (prev_x + 0.3, prev_y), (x + 0.25, y),
+            arrowstyle='->', mutation_scale=12,
+            linewidth=1.5, color='red', linestyle='dashed',
+            connectionstyle="arc3,rad=-.25", alpha=0.6
+        )
+        ax.add_patch(arrow_skip)
+        
+        # Add node (merge point)
+        self._draw_layer_node(
+            ax, x, y,
+            '+',
+            colors['residual'], 0.35, 0.35, size=14
+        )
+        self._draw_arrow(ax, x, y_main - 0.3, x, y + 0.18, linewidth=1.2)
 
 
 # Example usage and testing

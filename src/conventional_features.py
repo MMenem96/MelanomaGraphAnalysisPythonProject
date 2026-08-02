@@ -307,12 +307,21 @@ class ConventionalFeatureExtractor:
                     hist, _ = np.histogram(lbp_masked, bins=n_points+2, density=True)
                     for i, val in enumerate(hist):
                         features[f'lbp_hist_{i}'] = float(val)
+                    
+                    # LBP uniformity and entropy
+                    hist_norm = hist[hist > 0]
+                    features['lbp_uniformity'] = float(np.sum(hist_norm**2)) if len(hist_norm) > 0 else 0.0
+                    features['lbp_entropy'] = float(-np.sum(hist_norm * np.log2(hist_norm + 1e-10))) if len(hist_norm) > 0 else 0.0
                 else:
                     for i in range(n_points+2):
                         features[f'lbp_hist_{i}'] = 0.0
+                    features['lbp_uniformity'] = 0.0
+                    features['lbp_entropy'] = 0.0
             except:
                 for i in range(n_points+2 if 'n_points' in locals() else 26):
                     features[f'lbp_hist_{i}'] = 0.0
+                features['lbp_uniformity'] = 0.0
+                features['lbp_entropy'] = 0.0
             
             # Wavelet features
             try:
@@ -1181,8 +1190,29 @@ class ConventionalFeatureExtractor:
             if mask is None:
                 gray = color.rgb2gray(image)
                 threshold = filters.threshold_otsu(gray)
-                mask = gray < threshold
-                self.logger.info("Auto-generated mask using Otsu thresholding")
+                
+                # Try both directions and pick the one with reasonable coverage (20-80%)
+                mask_dark = gray < threshold
+                mask_bright = gray > threshold
+                
+                coverage_dark = np.sum(mask_dark) / mask_dark.size
+                coverage_bright = np.sum(mask_bright) / mask_bright.size
+                
+                # Choose mask with coverage between 20-80% (most lesions fall in this range)
+                if 0.2 <= coverage_dark <= 0.8:
+                    mask = mask_dark
+                    self.logger.info(f"Auto-generated mask (dark lesion): {coverage_dark:.1%} coverage")
+                elif 0.2 <= coverage_bright <= 0.8:
+                    mask = mask_bright
+                    self.logger.info(f"Auto-generated mask (bright lesion): {coverage_bright:.1%} coverage")
+                else:
+                    # Default to the one closer to 50%
+                    if abs(coverage_dark - 0.5) < abs(coverage_bright - 0.5):
+                        mask = mask_dark
+                        self.logger.warning(f"Mask coverage {coverage_dark:.1%} is outside ideal range")
+                    else:
+                        mask = mask_bright
+                        self.logger.warning(f"Mask coverage {coverage_bright:.1%} is outside ideal range")
             
             # Extract features (only active features, not commented ones)
             self.logger.info("Extracting features for visualization...")
@@ -1257,32 +1287,104 @@ class ConventionalFeatureExtractor:
             cbar4 = plt.colorbar(im4, ax=ax4, fraction=0.046, pad=0.04)
             cbar4.ax.tick_params(labelsize=8)
             
-            h_mean = features.get("hsv_h_mean", 0)
-            h_std = features.get("hsv_h_std", 0)
+            h_mean = features.get('hsv_0_mean', 0)  # Channel 0 is Hue
+            h_std = features.get('hsv_0_std', 0)
             ax4.set_title(f'(d) Hue Distribution\nMean: {h_mean:.3f}\nStd: {h_std:.3f}', 
                          fontsize=11, fontweight='bold')
             ax4.axis('off')
             
-            # ========== Panels (e1-e4): Gabor Filter Responses ==========
+            # ========== Panel (e1): Gabor Filter (0° orientation) ==========
+            ax_e1 = fig.add_subplot(gs[1, 0])
             gray_img = color.rgb2gray(image)
-            orientations = [0, np.pi/4, np.pi/2, 3*np.pi/4]
-            orientation_names = ['0°', '45°', '90°', '135°']
             
-            for idx, (theta, name) in enumerate(zip(orientations, orientation_names)):
-                ax = fig.add_subplot(gs[1, idx])
+            # Apply single Gabor filter at 0° (horizontal edges)
+            gabor_kernel = cv2.getGaborKernel((31, 31), sigma=4, theta=0, 
+                                             lambd=10, gamma=0.5, psi=0)
+            filtered = cv2.filter2D(gray_img, cv2.CV_64F, gabor_kernel)
+            filtered_masked = filtered.copy()
+            filtered_masked[~mask] = 0
+            
+            im_e1 = ax_e1.imshow(filtered_masked, cmap='viridis')
+            cbar_e1 = plt.colorbar(im_e1, ax=ax_e1, fraction=0.046, pad=0.04)
+            cbar_e1.ax.tick_params(labelsize=7)
+            
+            gabor_mean = features.get('gabor_t0_s3_f10_mean', 0)
+            ax_e1.set_title(f'(e1) Gabor Filter 0°\nMean: {gabor_mean:.3f}', fontsize=10, fontweight='bold')
+            ax_e1.axis('off')
+            
+            # ========== Panel (e2): RGB Color Histogram ==========
+            ax_e2 = fig.add_subplot(gs[1, 1])
+            
+            # Extract RGB values from masked region
+            rgb_masked = image[mask]
+            if len(rgb_masked) > 0:
+                # Create histogram for each channel
+                colors = ['#e74c3c', '#2ecc71', '#3498db']  # Red, Green, Blue
+                labels = ['Red', 'Green', 'Blue']
                 
-                # Apply Gabor filter
-                gabor_kernel = cv2.getGaborKernel((31, 31), sigma=4, theta=theta, 
-                                                 lambd=10, gamma=0.5, psi=0)
-                filtered = cv2.filter2D(gray_img, cv2.CV_64F, gabor_kernel)
-                filtered_masked = filtered.copy()
-                filtered_masked[~mask] = 0
+                for channel, (col, label) in enumerate(zip(colors, labels)):
+                    channel_data = rgb_masked[:, channel]
+                    hist, bins = np.histogram(channel_data, bins=32, range=(0, 255), density=True)
+                    bin_centers = (bins[:-1] + bins[1:]) / 2
+                    ax_e2.plot(bin_centers, hist, color=col, alpha=0.7, linewidth=2, label=label)
                 
-                im = ax.imshow(filtered_masked, cmap='viridis')
-                cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-                cbar.ax.tick_params(labelsize=7)
-                ax.set_title(f'(e{idx+1}) Gabor {name}', fontsize=10, fontweight='bold')
-                ax.axis('off')
+                ax_e2.set_xlabel('Pixel Intensity', fontsize=8)
+                ax_e2.set_ylabel('Normalized Frequency', fontsize=8)
+                ax_e2.legend(loc='upper right', fontsize=7)
+                ax_e2.grid(alpha=0.3, linestyle='--')
+                ax_e2.tick_params(labelsize=7)
+            
+            ax_e2.set_title('(e2) RGB Color Histogram', fontsize=10, fontweight='bold')
+            
+            # ========== Panel (e3): Wavelet Decomposition ==========
+            ax_e3 = fig.add_subplot(gs[1, 2])
+            
+            # Apply 2D wavelet transform to grayscale
+            try:
+                coeffs = pywt.wavedec2(gray_img, 'db1', level=2)
+                
+                # Reconstruct approximation (low-frequency component)
+                cA = coeffs[0]
+                cA_resized = cv2.resize(cA, (image.shape[1], image.shape[0]))
+                cA_masked = cA_resized.copy()
+                cA_masked[~mask] = 0
+                
+                im_e3 = ax_e3.imshow(cA_masked, cmap='plasma')
+                cbar_e3 = plt.colorbar(im_e3, ax=ax_e3, fraction=0.046, pad=0.04)
+                cbar_e3.ax.tick_params(labelsize=7)
+                
+                wavelet_energy = features.get('wavelet_approx_energy', 0)
+                ax_e3.set_title(f'(e3) Wavelet Approximation\nEnergy: {wavelet_energy:.2e}', 
+                               fontsize=10, fontweight='bold')
+            except Exception as e:
+                ax_e3.text(0.5, 0.5, 'Wavelet\nUnavailable', ha='center', va='center',
+                          fontsize=12, color='red')
+                ax_e3.set_title('(e3) Wavelet Approximation', fontsize=10, fontweight='bold')
+            
+            ax_e3.axis('off')
+            
+            # ========== Panel (e4): LBP Histogram Distribution ==========
+            ax_e4 = fig.add_subplot(gs[1, 3])
+            
+            # Extract LBP histogram features
+            gray_uint8_lbp = (color.rgb2gray(image) * 255).astype(np.uint8)
+            lbp_img = local_binary_pattern(gray_uint8_lbp, P=24, R=3, method='uniform')
+            lbp_masked_data = lbp_img[mask]
+            
+            if len(lbp_masked_data) > 0:
+                hist_lbp, bins_lbp = np.histogram(lbp_masked_data, bins=26, density=True)
+                bin_centers_lbp = (bins_lbp[:-1] + bins_lbp[1:]) / 2
+                
+                ax_e4.bar(bin_centers_lbp, hist_lbp, width=1.0, color='#9b59b6', 
+                         alpha=0.7, edgecolor='black', linewidth=0.5)
+                ax_e4.set_xlabel('LBP Code', fontsize=8)
+                ax_e4.set_ylabel('Frequency', fontsize=8)
+                ax_e4.grid(axis='y', alpha=0.3, linestyle='--')
+                ax_e4.tick_params(labelsize=7)
+            
+            lbp_entropy = features.get('lbp_entropy', 0)
+            ax_e4.set_title(f'(e4) LBP Histogram\nEntropy: {lbp_entropy:.3f}', 
+                           fontsize=10, fontweight='bold')
             
             # ========== Panel (f): Local Binary Pattern ==========
             ax_lbp = fig.add_subplot(gs[2, 0])
@@ -1311,7 +1413,8 @@ class ConventionalFeatureExtractor:
             cbar_edge = plt.colorbar(im_edge, ax=ax_edge, fraction=0.046, pad=0.04)
             cbar_edge.ax.tick_params(labelsize=8)
             
-            edge_mean = features.get("edge_strength_mean", 0)
+            # Calculate edge strength from masked gradient
+            edge_mean = float(np.mean(magnitude[mask])) if np.sum(mask) > 0 else 0.0
             ax_edge.set_title(f'(g) Edge Strength\nMean: {edge_mean:.4f}', 
                              fontsize=11, fontweight='bold')
             ax_edge.axis('off')
@@ -1327,151 +1430,11 @@ class ConventionalFeatureExtractor:
             cbar_r.ax.tick_params(labelsize=8)
             
             mdfkt_energy = features.get("mdfkt_R_magnitude_energy", 0)
-            ax_mdfkt.set_title(f'(h) Red Channel\nMDFKT Energy: {mdfkt_energy:.2e}', 
+            ax_mdfkt.set_title(f'(h) Red Channel\nMFKT Energy: {mdfkt_energy:.2e}', 
                               fontsize=11, fontweight='bold')
             ax_mdfkt.axis('off')
             
-            # ========== Panel (i): Texture Statistics ==========
-            ax_stats = fig.add_subplot(gs[2, 3])
-            ax_stats.axis('off')
-            
-            stats_text = f"""Texture Features:
-
-GLCM:
-  • Contrast: {features.get('glcm_contrast_d1_a0', 0):.4f}
-  • Correlation: {features.get('glcm_correlation_d1_a0', 0):.4f}
-  • Energy: {features.get('glcm_energy_d1_a0', 0):.4f}
-  • Homogeneity: {features.get('glcm_homogeneity_d1_a0', 0):.4f}
-
-LBP:
-  • Uniformity: {features.get('lbp_uniformity', 0):.4f}
-  • Entropy: {features.get('lbp_entropy', 0):.4f}
-
-Wavelet (db1):
-  • Energy: {features.get('wavelet_db1_energy', 0):.4f}
-  • Entropy: {features.get('wavelet_db1_entropy', 0):.4f}
-
-Gabor Filters:
-  • Mean response: {features.get('gabor_t0_s3_f10_mean', 0):.4f}
-            """
-            ax_stats.text(0.05, 0.5, stats_text, fontsize=9, family='monospace',
-                         verticalalignment='center', 
-                         bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.4, pad=1))
-            ax_stats.set_title('(i) Texture Statistics', fontsize=11, fontweight='bold')
-            
-            # ========== Panel (j): Geometric Summary ==========
-            ax_geom = fig.add_subplot(gs[3, 0])
-            ax_geom.axis('off')
-            
-            geom_text = f"""Geometric Features:
-
-Shape:
-  • Area: {features.get('area', 0):.1f} px²
-  • Perimeter: {features.get('perimeter', 0):.1f} px
-  • Compactness: {features.get('compactness', 0):.4f}
-  • Solidity: {features.get('solidity', 0):.4f}
-
-Axes:
-  • Major: {features.get('major_axis_length', 0):.1f} px
-  • Minor: {features.get('minor_axis_length', 0):.1f} px
-  • Ratio: {features.get('axis_ratio', 1):.4f}
-
-Asymmetry:
-  • Horizontal: {features.get('asymmetry_horizontal', 0):.4f}
-  • Vertical: {features.get('asymmetry_vertical', 0):.4f}
-            """
-            ax_geom.text(0.05, 0.5, geom_text, fontsize=9, family='monospace',
-                        verticalalignment='center',
-                        bbox=dict(boxstyle='round', facecolor='lightgreen', alpha=0.4, pad=1))
-            ax_geom.set_title('(j) Geometric Summary', fontsize=11, fontweight='bold')
-            
-            # ========== Panel (k): Color Summary ==========
-            ax_color = fig.add_subplot(gs[3, 1])
-            ax_color.axis('off')
-            
-            color_text = f"""Color Features:
-
-RGB:
-  • R mean: {features.get('rgb_r_mean', 0):.2f}
-  • G mean: {features.get('rgb_g_mean', 0):.2f}
-  • B mean: {features.get('rgb_b_mean', 0):.2f}
-
-HSV:
-  • H mean: {features.get('hsv_h_mean', 0):.3f}
-  • S mean: {features.get('hsv_s_mean', 0):.3f}
-  • V mean: {features.get('hsv_v_mean', 0):.3f}
-
-LAB:
-  • L mean: {features.get('lab_l_mean', 0):.2f}
-  • A mean: {features.get('lab_a_mean', 0):.2f}
-  • B mean: {features.get('lab_b_mean', 0):.2f}
-            """
-            ax_color.text(0.05, 0.5, color_text, fontsize=9, family='monospace',
-                         verticalalignment='center',
-                         bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.5, pad=1))
-            ax_color.set_title('(k) Color Summary', fontsize=11, fontweight='bold')
-            
-            # ========== Panel (l): MDFKT Features ==========
-            ax_mdfkt_sum = fig.add_subplot(gs[3, 2])
-            ax_mdfkt_sum.axis('off')
-            
-            mdfkt_text = f"""MDFKT Features:
-
-R Channel:
-  • Magnitude mean: {features.get('mdfkt_R_magnitude_mean', 0):.2e}
-  • Energy: {features.get('mdfkt_R_magnitude_energy', 0):.2e}
-  • Entropy: {features.get('mdfkt_R_magnitude_entropy', 0):.4f}
-
-G Channel:
-  • Magnitude mean: {features.get('mdfkt_G_magnitude_mean', 0):.2e}
-  • Energy: {features.get('mdfkt_G_magnitude_energy', 0):.2e}
-
-B Channel:
-  • Magnitude mean: {features.get('mdfkt_B_magnitude_mean', 0):.2e}
-  • Energy: {features.get('mdfkt_B_magnitude_energy', 0):.2e}
-
-Cross-channel:
-  • RG ratio: {features.get('mdfkt_RG_mag_ratio', 1):.4f}
-            """
-            ax_mdfkt_sum.text(0.05, 0.5, mdfkt_text, fontsize=9, family='monospace',
-                             verticalalignment='center',
-                             bbox=dict(boxstyle='round', facecolor='lavender', alpha=0.5, pad=1))
-            ax_mdfkt_sum.set_title('(l) MDFKT Summary', fontsize=11, fontweight='bold')
-            
-            # ========== Panel (m): Top Feature Values ==========
-            ax_bars = fig.add_subplot(gs[3, 3])
-            
-            # Select key features for bar chart
-            key_features = {
-                'Compactness': features.get('compactness', 0),
-                'Solidity': features.get('solidity', 0),
-                'Axis Ratio': features.get('axis_ratio', 1) - 0.5,  # Center around 0.5
-                'GLCM Contrast': min(features.get('glcm_contrast_d1_a0', 0) / 100, 1),
-                'LBP Uniformity': features.get('lbp_uniformity', 0),
-                'Edge Strength': min(features.get('edge_strength_mean', 0) * 10, 1),
-                'HSV S Mean': features.get('hsv_s_mean', 0),
-                'Gabor Mean': min(abs(features.get('gabor_t0_s3_f10_mean', 0)) / 10, 1),
-            }
-            
-            names = list(key_features.keys())
-            values = list(key_features.values())
-            
-            # Color code based on value
-            colors = ['#2ecc71' if v < 0.33 else '#f39c12' if v < 0.67 else '#e74c3c' 
-                     for v in values]
-            
-            y_pos = np.arange(len(names))
-            bars = ax_bars.barh(y_pos, values, color=colors, alpha=0.8, edgecolor='black', linewidth=0.5)
-            ax_bars.set_yticks(y_pos)
-            ax_bars.set_yticklabels(names, fontsize=8)
-            ax_bars.set_xlabel('Normalized Value', fontsize=9)
-            ax_bars.set_xlim(0, 1.0)
-            ax_bars.set_title('(m) Key Feature Values', fontsize=11, fontweight='bold')
-            ax_bars.grid(axis='x', alpha=0.3, linestyle='--')
-            
-            # Add value labels
-            for i, (bar, val) in enumerate(zip(bars, values)):
-                ax_bars.text(val + 0.02, i, f'{val:.3f}', va='center', fontsize=7)
+            # Skip text summary panels (i, j, k, l, m) - removed for cleaner visualization
             
             # Main title
             image_name = Path(image_path).stem
@@ -1486,8 +1449,8 @@ Cross-channel:
             else:
                 os.makedirs(os.path.dirname(save_path), exist_ok=True)
             
-            # Save figure
-            plt.savefig(save_path, dpi=dpi, bbox_inches='tight', facecolor='white')
+            # Save figure with transparent background
+            plt.savefig(save_path, dpi=dpi, bbox_inches='tight', transparent=True)
             self.logger.info(f"✅ Feature visualization saved to: {save_path}")
             
             plt.close(fig)

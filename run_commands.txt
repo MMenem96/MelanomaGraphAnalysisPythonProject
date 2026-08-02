@@ -34,26 +34,6 @@ python manual_train_features.py \
 
 
 
-/////
-    Best Best Best for Classical_Krawtchouk (Feature Selection 360!):
-
- python manual_train_features.py \
-    --train-from-features \
-    --features-file output/features/extracted_features_full_plus_classical_krawtchouk_20251110_105822.pkl \
-    --feature_selection mutual_info \
-    --n_features 360 \
-    --feature_classifiers all
-
-
-Best Best Best for Fractional_Krawtchouk (Feature Selection 490 or 300!):
-
- python manual_train_features.py \
-    --train-from-features \
-    --features-file output/features/extracted_features_full_20251121_224247.pkl \
-    --feature_selection mutual_info \
-    --n_features 360 \
-    --feature_classifiers all
-
 
 
 ///// Best for Multi Parameter Krawtchouk!, lamda = 1/k, and  p= 0.5, N = 64, and mutual_info and 360 or 380 features!
