@@ -18,3 +18,27 @@ __pycache__/
 *.log
 .DS_Store
 .python-version
+
+# Training/runtime junk (some of this is already tracked from earlier commits —
+# `git rm -r --cached` is needed to stop tracking it, this only stops NEW files).
+catboost_info/
+*.tmp
+uploads/
+static/results/
+*.pid
+
+# Never version image or feature artifacts — data/ and output/ above already
+# cover canonical/, canonical7/ (1 GB of segmented PNGs) and features7/,
+# but be explicit so a stray path can't slip through.
+*.pkl
+*.npz
+*.pt
+*.pth
+*.h5
+*.zip
+data/canonical7/
+paper_pipeline/output/
+
+# Editor
+.vscode/
+.idea/
