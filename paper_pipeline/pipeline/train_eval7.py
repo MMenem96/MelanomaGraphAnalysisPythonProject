@@ -218,6 +218,8 @@ def main() -> int:
     ap.add_argument("--cv-splits", type=int, default=DEFAULT_CV_SPLITS)
     ap.add_argument("--random-state", type=int, default=DEFAULT_RANDOM_STATE)
     ap.add_argument("--classifiers", type=str, default=",".join(ACTIVE_CLASSIFIERS))
+    ap.add_argument("--always-keep", default="meta_",
+                    help="Comma-separated column prefixes exempt from MI filtering.")
     ap.add_argument("--skip-cv", action="store_true",
                     help="Test-only pass (fast). Model selection still requires CV.")
     args = ap.parse_args()
@@ -262,11 +264,24 @@ def main() -> int:
                  "Balanced-accuracy baseline: %.4f",
                  baseline, CLASSES7[majority[0]], 1.0 / len(CLASSES7))
 
+        # Columns to protect from MI filtering (patient metadata is domain
+        # knowledge we choose to include, not a candidate to be ranked out:
+        # 19 metadata columns among 2,528 would almost certainly be dropped).
+        forced = [i for i, c in enumerate(feature_cols)
+                  if any(c.startswith(p) for p in args.always_keep.split(",") if p)]
         k = min(args.n_features, X_train.shape[1])
-        LOG.info("Mutual-information selection: k=%d (fit on train only)", k)
-        selector = SelectKBest(mutual_info_classif, k=k)
+        LOG.info("Mutual-information selection: k=%d (fit on train only)%s", k,
+                 f", forcing {len(forced)} column(s) to be kept" if forced else "")
+        selector = SelectKBest(mutual_info_classif, k=max(1, k - len(forced)))
         X_train_sel = selector.fit_transform(X_train, y_train)
         X_test_sel = selector.transform(X_test)
+        if forced:
+            keep = [i for i in forced if not selector.get_support()[i]]
+            if keep:
+                X_train_sel = np.hstack([X_train_sel, X_train[:, keep]])
+                X_test_sel = np.hstack([X_test_sel, X_test[:, keep]])
+            LOG.info("  kept %d forced column(s) not already selected by MI "
+                     "→ final feature count %d", len(keep), X_train_sel.shape[1])
 
         scaler = RobustScaler()
         X_train_sel = scaler.fit_transform(X_train_sel)
