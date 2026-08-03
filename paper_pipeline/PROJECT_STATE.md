@@ -170,6 +170,78 @@ lost. A hang produces no error and no exit, so process-liveness checks do not
 catch it — the watchdog keys on log silence instead. Any long run in this repo
 should checkpoint to disk.
 
+---
+
+## RESUME HERE (state as of 2026-08-03 17:30)
+
+### Results measured so far — 7 arms, 9 classifiers each
+
+Best model per arm (all `Logistic Regression` on balanced accuracy; LightGBM
+leads on accuracy/AUC). `k = 360` throughout — **not yet swept**.
+
+| arm | features | bal-acc | accuracy | AUC |
+|---|---|---|---|---|
+| lesion_equalize (handcrafted+MKT) | 461 | 0.6369 | 0.6564 | 0.8946 |
+| lesion_equalize_hybrid (+frozen ResNet-50) | 2,509 | 0.6423 | 0.6420 | 0.8877 |
+| lesion_equalize_ft (+fine-tuned EffNet) | 1,741 | 0.6601 | 0.6504 | 0.8934 |
+| lesion_equalize_hybrid_meta (+metadata) | 2,528 | 0.6794 | 0.6867 | 0.9106 |
+| **lesion_equalize_ft_meta (best honest)** | **1,760** | **0.7077** | **0.6922** | **0.9110** |
+| image_equalize (LEAKY, comparison only) | 461 | 0.7256 | 0.6675 | 0.9176 |
+| image_equalize_hybrid (LEAKY) | 2,509 | 0.7393 | 0.6490 | 0.9152 |
+
+Best *accuracy* overall: LightGBM on `lesion_equalize_ft_meta`, **0.8183**,
+AUC **0.9556**. Mean per-disease (one-vs-rest) accuracy: **94.3%**.
+
+Two headline findings, both reportable:
+1. **Image-level splitting inflates balanced accuracy by ~+0.10** — measured on
+   all 9 classifiers, both feature sets, zero exceptions.
+2. **Real patient metadata is worth ~+0.015 balanced accuracy / +0.017 AUC**,
+   not the +5.57 accuracy reported by Sonuç et al. (who pair SMOTENC-synthesised
+   metadata with randomly chosen same-class images).
+
+### First command after restart
+
+```bash
+cd ~/Desktop/Work/Master/Practical\ Project/MelanomaGraphAnalysisV3
+nohup bash paper_pipeline/scripts/run_pro_pipeline.sh > /dev/null 2>&1 &
+```
+
+Runs, in order (~5 h, all resumable except the fine-tune itself):
+1. aggressive fine-tune — full 239-layer unfreeze, 45 epochs, balanced-accuracy
+   early stopping (the first attempt trained only 32 layers for 10 epochs and
+   was still improving when it stopped)
+2. `combine7.py` — 461 + 2,048 frozen + 1,280 fine-tuned + 19 metadata = 3,808
+3. train 9 classifiers on the combined set
+4. k sweep (800, 1500) — `k=360` was tuned for the *binary* task and is the
+   prime suspect for throttling the deep features
+
+### Then, in priority order
+
+- [ ] **Stacked ensemble** (`scripts/cross_stacking.py` exists, unused for 7-class).
+      Sonuç et al. gained +3.5 accuracy from stacking over their best single model.
+- [ ] **Figures + tables**: leakage comparison chart, 7x7 confusion matrices,
+      per-class recall, feature-family ablation, per-disease comparison vs
+      Halawani/Khan/Arshad.
+- [ ] **Create the Track B paper repo** and draft.
+- [ ] Move the `paper-v7-submitted` tag onto commit `1214e89` (needs a branch
+      switch, so only when nothing is running).
+
+### ⚠️ Action needed on the BINARY paper (Track A, under review)
+
+`Khan et al. 2024, Discover Applied Sciences 6:300` — cited in `main.tex` as
+`Khan2025` (89.0% accuracy) — **is RETRACTED**. The retraction watermark is on
+every page of the PDF. It must be removed or replaced before reviewers see it.
+
+### Environment change
+
+`tensorflow-metal` was installed into `.venv` on 2026-08-03 to reach the M4 GPU
+(61 img/s vs ~8 on CPU). Nothing already computed changes — Track A's numbers
+are frozen in CSVs — but a future re-run of the binary pipeline could differ in
+the last decimals. Uninstall with `pip uninstall tensorflow-metal` if strict
+CPU reproducibility is wanted.
+
+---
+
 ### Current state — where we stopped
 
 - [x] Literature sweep → `SEVEN_CLASS_PROTOCOL.md`
