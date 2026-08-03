@@ -57,7 +57,8 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from paper_pipeline.pipeline import qa
-from paper_pipeline.pipeline.classifiers import ACTIVE_CLASSIFIERS, build_classifier
+from paper_pipeline.pipeline.classifiers import ACTIVE_CLASSIFIERS
+from paper_pipeline.pipeline.classifiers7 import build_classifier7 as build_classifier
 from paper_pipeline.pipeline.dataset import CLASSES7
 
 LOG = logging.getLogger("train_eval7")
